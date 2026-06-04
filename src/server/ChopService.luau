@@ -86,10 +86,17 @@ Remotes.ChopTree.OnServerEvent:Connect(function(player, uid)
 	end
 	local species = Wood.get(result.speciesId)
 	local price = species and species.plankPrice or 0
-	prof.loadLogs += result.logs
-	prof.loadValue += result.logs * price
-	prof.lifetimeLogs += result.logs
-	Net.notice(player, ("Timber!  +%d %s logs"):format(result.logs, species and species.name or "wood"))
+	-- Cap at truck capacity; award only what fits.
+	local canCarry = math.max(0, cap - prof.loadLogs)
+	local actualLogs = math.min(result.logs, canCarry)
+	prof.loadLogs = math.min(prof.loadLogs + actualLogs, cap)
+	prof.loadValue += actualLogs * price
+	prof.lifetimeLogs += actualLogs
+	local suffix = if actualLogs < result.logs then " (truck full!)" else ""
+	Net.notice(player, ("Timber! +%d %s logs%s"):format(actualLogs, species and species.name or "wood", suffix))
+	-- Refresh the physical log-stack visual on the truck.
+	local RigService = require(script.Parent:WaitForChild("RigService"))
+	RigService.updateVisualLogs(player, prof.loadLogs, cap)
 	Net.push(player)
 end)
 

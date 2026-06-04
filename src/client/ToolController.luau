@@ -62,30 +62,37 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	swinging = true
 	task.spawn(function()
 		while swinging do
-			local now = os.clock()
-			if now - lastSwing >= getSwingInterval() then
-				local ray = camera:ScreenPointToRay(
-					UserInputService:GetMouseLocation().X,
-					UserInputService:GetMouseLocation().Y)
-				local result = Workspace:Raycast(
-					ray.Origin, ray.Direction * 160,
-					RaycastParams.new())
-				if result and result.Instance and result.Instance:IsA("BasePart") then
-					local uid = findTreeUid(result.Instance)
-					if uid then
-						local hrp = humanoidRootPart()
-						if hrp then
-							local dx = result.Position.X - hrp.Position.X
-							local dz = result.Position.Z - hrp.Position.Z
-							if math.sqrt(dx * dx + dz * dz) <= getReach() then
-								lastSwing = now
-								Remotes.ChopTree:FireServer(uid)
-							end
+			local mousePos = UserInputService:GetMouseLocation()
+			local ray = camera:ScreenPointToRay(mousePos.X, mousePos.Y)
+
+			-- Exclude the player's own character so the ray reaches the tree
+			-- instead of hitting the player's torso/arms first.
+			local params = RaycastParams.new()
+			params.FilterType = Enum.RaycastFilterType.Exclude
+			local char = player.Character
+			if char then
+				params.FilterDescendantsInstances = { char }
+			end
+
+			local result = Workspace:Raycast(ray.Origin, ray.Direction * 160, params)
+			if result and result.Instance and result.Instance:IsA("BasePart") then
+				local uid = findTreeUid(result.Instance)
+				if uid then
+					local hrp = humanoidRootPart()
+					if hrp then
+						local dx = result.Position.X - hrp.Position.X
+						local dz = result.Position.Z - hrp.Position.Z
+						if math.sqrt(dx * dx + dz * dz) <= getReach() then
+							lastSwing = os.clock()
+							Remotes.ChopTree:FireServer(uid)
 						end
 					end
 				end
 			end
-			RunService.Heartbeat:Wait()
+
+			-- Wait one swing interval before the next attempt. task.wait is
+			-- cleaner than per-frame polling and naturally matches the tool rhythm.
+			task.wait(getSwingInterval())
 		end
 	end)
 end)

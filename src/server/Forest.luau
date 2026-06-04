@@ -135,6 +135,17 @@ local function buildTree(species: Wood.Species, baseCFrame: CFrame, uid: string)
 		upper.Parent = model
 	end
 
+	-- Weld every leaf/canopy part to the trunk so the whole tree falls as
+	-- a single rigid body when it's unanchored during the topple.
+	for _, desc in model:GetDescendants() do
+		if desc:IsA("BasePart") and desc ~= trunk then
+			local w = Instance.new("WeldConstraint")
+			w.Part0 = trunk
+			w.Part1 = desc
+			w.Parent = trunk
+		end
+	end
+
 	model:SetAttribute("Uid", uid)
 	model:SetAttribute("Species", species.id)
 	model:SetAttribute("Hp", species.hp)
@@ -189,30 +200,37 @@ local function toppleAndRemove(model: Model)
 			model:Destroy()
 			return
 		end
-		-- Hide the health bar immediately.
+		-- Hide the health bar.
 		local hb = trunk:FindFirstChild("HealthBar")
 		if hb and hb:IsA("BillboardGui") then
 			hb.Enabled = false
 		end
-		local base = trunk.CFrame * CFrame.new(0, -trunk.Size.Y / 2, 0)
-		model.WorldPivot = base
-		local dir = if rng:NextNumber() < 0.5 then 1 else -1
-		local dur = 0.7
-		local elapsed = 0
-		while elapsed < dur do
-			local dt = RunService.Heartbeat:Wait()
-			elapsed += dt
-			local angle = math.rad(86) * smoothstep(elapsed / dur) * dir
-			model:PivotTo(base * CFrame.Angles(0, 0, angle))
-		end
-		-- Fade out the toppled trunk before removing.
-		for _, p in model:GetDescendants() do
-			if p:IsA("BasePart") then
-				p.CanCollide = false
+		-- Leaf parts are decorative — disable collision and make them massless
+		-- so they don't add drag that slows the fall or cause weird bounces.
+		for _, desc in model:GetDescendants() do
+			if desc:IsA("BasePart") and desc.Name == "Leaf" then
+				desc.CanCollide = false
+				desc.Massless = true
 			end
 		end
-		task.wait(0.5)
-		model:Destroy()
+		-- Unanchor the whole rig (WeldConstraints hold it together) and let
+		-- the physics engine handle the fall — this looks far more realistic
+		-- than the scripted pivot because the trunk bounces off the terrain.
+		for _, desc in model:GetDescendants() do
+			if desc:IsA("BasePart") then
+				desc.Anchored = false
+			end
+		end
+		-- Apply a random tipping angular velocity so it falls in a
+		-- believable direction and speed.
+		local tipX = (rng:NextNumber() < 0.5 and 1 or -1) * rng:NextNumber(1.0, 1.8)
+		local tipZ = rng:NextNumber(-0.6, 0.6)
+		trunk.AssemblyAngularVelocity = Vector3.new(tipX, 0, tipZ)
+		-- Wait for it to crash down and settle, then remove the debris.
+		task.wait(5)
+		if model and model.Parent then
+			model:Destroy()
+		end
 	end)
 end
 
