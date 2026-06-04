@@ -1,62 +1,76 @@
 --!strict
--- Big Timber — every tunable constant lives here. Per the project rule,
--- no magic numbers anywhere else: services and builders read from this
--- module so the whole game can be balanced from one file.
+-- Big Timber — every tunable constant lives here.
+-- No magic numbers anywhere else in the codebase.
 
 local GameConfig = {}
 
 -- Economy --------------------------------------------------------------
 GameConfig.StartingCash = 150
 GameConfig.AutosaveIntervalSeconds = 30
-GameConfig.StateBroadcastInterval = 0.4 -- seconds between HUD snapshots
+GameConfig.StateBroadcastInterval = 0.4
 
 -- Player ---------------------------------------------------------------
 GameConfig.WalkSpeed = 18
 
--- World / terrain ------------------------------------------------------
--- The map is a square of voxel terrain centred on the origin. A flat
--- circular "yard" in the middle holds the mill + spawn; rolling forested
--- hills ring it; a lake sits off to one side for scenery.
+-- World / terrain -------------------------------------------------------
+-- Layout (Z axis, +Z = north away from spawn):
+--   Spawn at (0,0,0). Flat logging yard extends north.
+--   Forest hills north + east/west of yard.
+--   Paved road runs SOUTH from the yard (decreasing Z).
+--   Tunnel hill straddles z = TunnelHillZ.
+--   Town (mill + shop) south of the tunnel.
 GameConfig.Terrain = {
-	HalfExtent = 480, -- studs from centre to each edge (~960-stud square)
-	CellSize = 16, -- footprint of each terrain column (smaller = smoother, slower)
-	FloorY = -40, -- terrain is filled from here up to the surface height
-	HillAmplitude = 46, -- tallest hill above yard level
-	NoiseScale = 130, -- larger = broader, gentler hills
-	YardRadius = 130, -- flat central area (mill + spawn) sits at y = 0
-	YardBlend = 70, -- band outside the yard where hills ramp up from flat
-	LakeCenter = Vector3.new(280, 0, -250),
-	LakeRadius = 95,
+	HalfExtent = 620,
+	CellSize = 16,
+	FloorY = -44,
+	HillAmplitude = 50,
+	NoiseScale = 140,
+	-- The flat yard around spawn. Trees and roads start outside this.
+	YardRadius = 140,
+	YardBlend = 75,
+	-- Lake sits in the northeast forest for scenery.
+	LakeCenter = Vector3.new(310, 0, 210),
+	LakeRadius = 90,
 	LakeDepth = 24,
+	-- Tunnel hill: a raised ridge the paved road punches through.
+	-- Only terrain OUTSIDE the road corridor (|x| > TunnelRoadHW) is raised.
+	TunnelHillZ = -270,
+	TunnelHillRadius = 130,
+	TunnelHillHeight = 46,
+	TunnelRoadHW = 11, -- road half-width kept flat through the hill
 }
 
 -- Forest ---------------------------------------------------------------
 GameConfig.Forest = {
-	TreeCount = 150,
-	MinSpacing = 16, -- minimum studs between two trees
-	RegrowSeconds = 25, -- a felled tree regrows after this delay
-	MinRadius = 165, -- trees only spawn in this ring from centre, keeping
-	MaxRadius = 470, -- the yard clear and the very edge walkable
-	-- Species weighting for the starter forest (must sum to ~1.0). More
-	-- valuable species are rarer, so the kid chases them.
-	SpeciesWeights = {
-		pine = 0.64,
-		oak = 0.28,
-		redwood = 0.08,
-	},
+	TreeCount = 220,
+	MinSpacing = 16,
+	RegrowSeconds = 25,
+	MinRadius = 150,
+	MaxRadius = 560,
+	-- Trees must be NORTH of this Z (don't plant in the road/town area).
+	NorthOnly_MinZ = -100,
+	SpeciesWeights = { pine = 0.62, oak = 0.28, redwood = 0.10 },
 }
 
 -- Chopping -------------------------------------------------------------
 GameConfig.Chop = {
-	ReachStuds = 15, -- how close you must stand to a tree to land a swing
-	ServerSwingCooldown = 0.16, -- min seconds between accepted swings (anti-spam)
+	ReachStuds = 16,
+	ServerSwingCooldown = 0.15,
 }
 
 -- Mill -----------------------------------------------------------------
+-- Sits south of the tunnel in the town valley.
 GameConfig.Mill = {
-	Position = Vector3.new(0, 0, 92), -- on the flat yard, in front of spawn
-	IntakeRadius = 24, -- stand or park within this of the mill to unload
-	ProcessLogsPerSecond = 7, -- how fast the saw eats your load
+	Position = Vector3.new(0, 0, -420),
+	IntakeRadius = 26,
+	ProcessLogsPerSecond = 7,
+}
+
+-- Shop -----------------------------------------------------------------
+-- NPC dealer, further down the road from the mill.
+GameConfig.Shop = {
+	Position = Vector3.new(0, 0, -560),
+	NpcName = "Big Dale",
 }
 
 return GameConfig

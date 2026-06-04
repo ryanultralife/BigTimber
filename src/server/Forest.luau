@@ -1,13 +1,15 @@
 --!strict
--- The choppable forest. Scatters trees across the hills, tracks their HP,
--- and handles felling (a scripted topple + log drop) and regrow.
+-- Choppable forest: scatter trees across the hills north of the yard,
+-- track HP, handle felling (physics topple + log drop), and regrow.
 --
--- Trees are static anchored Models in Workspace.Forest. Each carries
--- attributes the client reads to target it: Uid, Species, Hp, MaxHp.
--- A registry maps Uid → entry for O(1) lookup from ChopService.
+-- Trees are NOT planted in:
+--   • The flat yard (inside YardRadius)
+--   • The lake / shoreline (surfaceAt < 0.5)
+--   • The paved road corridor (|x| < 18, z < NorthOnly_MinZ)
+--   • The town/tunnel area south of NorthOnly_MinZ
+-- This keeps the south road, tunnel, mill and shop clear of trees.
 
 local Workspace = game:GetService("Workspace")
-local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
@@ -26,20 +28,13 @@ local nextId = 0
 
 local F = GameConfig.Forest
 
-local function smoothstep(t: number): number
-	t = math.clamp(t, 0, 1)
-	return t * t * (3 - 2 * t)
-end
-
 local function part(props: { [string]: any }): Part
 	local p = Instance.new("Part")
 	p.Anchored = true
-	p.Material = Enum.Material.SmoothPlastic
 	p.TopSurface = Enum.SurfaceType.Smooth
 	p.BottomSurface = Enum.SurfaceType.Smooth
-	for k, v in props do
-		(p :: any)[k] = v
-	end
+	p.CanCollide = true
+	for k, v in props do (p :: any)[k] = v end
 	return p
 end
 
@@ -48,9 +43,7 @@ local function pickSpeciesId(): string
 	local acc = 0
 	for id, w in F.SpeciesWeights do
 		acc += w
-		if r <= acc then
-			return id
-		end
+		if r <= acc then return id end
 	end
 	return "pine"
 end
@@ -63,14 +56,12 @@ local function buildHealthBar(trunk: BasePart, species: Wood.Species)
 	gui.AlwaysOnTop = true
 	gui.Enabled = false
 	gui.Parent = trunk
-
 	local bg = Instance.new("Frame")
 	bg.Size = UDim2.fromScale(1, 1)
 	bg.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 	bg.BackgroundTransparency = 0.3
 	bg.BorderSizePixel = 0
 	bg.Parent = gui
-
 	local fill = Instance.new("Frame")
 	fill.Name = "Fill"
 	fill.Size = UDim2.fromScale(1, 1)
@@ -83,66 +74,43 @@ local function buildTree(species: Wood.Species, baseCFrame: CFrame, uid: string)
 	local model = Instance.new("Model")
 	model.Name = "Tree_" .. uid
 
-	local trunk = part({
-		Name = "Trunk",
+	local trunk = part({ Name = "Trunk",
 		Size = Vector3.new(species.trunkRadius * 2, species.trunkHeight, species.trunkRadius * 2),
-		Color = species.logColor,
-		Material = Enum.Material.Wood,
-		CanCollide = true,
-	})
+		Color = species.logColor, Material = Enum.Material.Wood, CanCollide = true })
 	trunk.CFrame = baseCFrame * CFrame.new(0, species.trunkHeight / 2, 0)
 	trunk.Parent = model
 	model.PrimaryPart = trunk
 
 	local topY = species.trunkHeight
 	if species.conical then
-		-- Pine / redwood: three stacked, squashed balls tapering upward.
 		for i = 0, 2 do
 			local r = species.canopyRadius * (1 - i * 0.26)
-			local leaf = part({
-				Name = "Leaf",
-				Shape = Enum.PartType.Ball,
+			local leaf = part({ Name = "Leaf", Shape = Enum.PartType.Ball,
 				Size = Vector3.new(r * 2, r * 2.3, r * 2),
-				Color = species.leafColor,
-				Material = Enum.Material.Grass,
-				CanCollide = false,
-			})
+				Color = species.leafColor, Material = Enum.Material.Grass,
+				CanCollide = false })
 			leaf.CFrame = baseCFrame * CFrame.new(0, topY - 1 + i * species.canopyRadius, 0)
 			leaf.Parent = model
 		end
 	else
-		-- Oak: a broad round crown from two overlapping balls.
 		local r = species.canopyRadius
-		local lower = part({
-			Name = "Leaf",
-			Shape = Enum.PartType.Ball,
+		local lower = part({ Name = "Leaf", Shape = Enum.PartType.Ball,
 			Size = Vector3.new(r * 2, r * 1.7, r * 2),
-			Color = species.leafColor,
-			Material = Enum.Material.Grass,
-			CanCollide = false,
-		})
+			Color = species.leafColor, Material = Enum.Material.Grass, CanCollide = false })
 		lower.CFrame = baseCFrame * CFrame.new(0, topY + r * 0.35, 0)
 		lower.Parent = model
-		local upper = part({
-			Name = "Leaf",
-			Shape = Enum.PartType.Ball,
+		local upper = part({ Name = "Leaf", Shape = Enum.PartType.Ball,
 			Size = Vector3.new(r * 1.5, r * 1.4, r * 1.5),
-			Color = species.leafColor,
-			Material = Enum.Material.Grass,
-			CanCollide = false,
-		})
+			Color = species.leafColor, Material = Enum.Material.Grass, CanCollide = false })
 		upper.CFrame = baseCFrame * CFrame.new(0, topY + r * 1.1, 0)
 		upper.Parent = model
 	end
 
-	-- Weld every leaf/canopy part to the trunk so the whole tree falls as
-	-- a single rigid body when it's unanchored during the topple.
+	-- Weld leaves to trunk so the whole tree falls as one body
 	for _, desc in model:GetDescendants() do
 		if desc:IsA("BasePart") and desc ~= trunk then
 			local w = Instance.new("WeldConstraint")
-			w.Part0 = trunk
-			w.Part1 = desc
-			w.Parent = trunk
+			w.Part0 = trunk; w.Part1 = desc; w.Parent = trunk
 		end
 	end
 
@@ -150,16 +118,14 @@ local function buildTree(species: Wood.Species, baseCFrame: CFrame, uid: string)
 	model:SetAttribute("Species", species.id)
 	model:SetAttribute("Hp", species.hp)
 	model:SetAttribute("MaxHp", species.hp)
-
 	buildHealthBar(trunk, species)
-
 	model.Parent = forestFolder
 	return model
 end
 
 local function plantAt(x: number, z: number, speciesId: string): Entry
 	local species = Wood.get(speciesId) :: Wood.Species
-	local y = World.surfaceAt(x, z) - 1 -- sink the base a stud so it never floats
+	local y = World.surfaceAt(x, z) - 1
 	local base = CFrame.new(x, y, z) * CFrame.Angles(0, rng:NextNumber() * math.pi * 2, 0)
 	nextId += 1
 	local uid = "t" .. nextId
@@ -169,88 +135,54 @@ local function plantAt(x: number, z: number, speciesId: string): Entry
 	return entry
 end
 
--- Drop a couple of stubby log props at the stump for visual juice. These
--- are cosmetic — the actual logs are credited to the player in ChopService.
 local function dropLogProps(species: Wood.Species, x: number, y: number, z: number)
 	for i = 1, 3 do
-		local log = part({
-			Name = "LogProp",
-			Shape = Enum.PartType.Cylinder,
-			Size = Vector3.new(4, 1.6, 1.6),
-			Color = species.logColor,
-			Material = Enum.Material.Wood,
-			Anchored = false,
-			CanCollide = true,
-		})
-		log.CFrame = CFrame.new(x + rng:NextNumber(-2, 2), y + 2 + i, z + rng:NextNumber(-2, 2))
+		local log = part({ Name = "LogProp", Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(4, 1.6, 1.6), Color = species.logColor,
+			Material = Enum.Material.Wood, Anchored = false, CanCollide = true })
+		log.CFrame = CFrame.new(
+			x + rng:NextNumber(-2, 2), y + 2 + i, z + rng:NextNumber(-2, 2))
 			* CFrame.Angles(0, rng:NextNumber() * math.pi, math.rad(rng:NextNumber(-20, 20)))
-		log.AssemblyLinearVelocity = Vector3.new(rng:NextNumber(-6, 6), 6, rng:NextNumber(-6, 6))
+		log.AssemblyLinearVelocity = Vector3.new(
+			rng:NextNumber(-6, 6), 6, rng:NextNumber(-6, 6))
 		log.Parent = forestFolder
 		Debris:AddItem(log, 8)
 	end
 end
 
--- Scripted topple: pivot the whole (anchored) tree about its base over ~0.7s,
--- then fade and remove. PivotTo moves all parts as a unit, so this is robust
--- without unanchoring anything into the physics solver.
 local function toppleAndRemove(model: Model)
 	task.spawn(function()
 		local trunk = model.PrimaryPart
-		if not trunk then
-			model:Destroy()
-			return
-		end
-		-- Hide the health bar.
+		if not trunk then model:Destroy(); return end
 		local hb = trunk:FindFirstChild("HealthBar")
-		if hb and hb:IsA("BillboardGui") then
-			hb.Enabled = false
-		end
-		-- Leaf parts are decorative — disable collision and make them massless
-		-- so they don't add drag that slows the fall or cause weird bounces.
+		if hb and hb:IsA("BillboardGui") then hb.Enabled = false end
 		for _, desc in model:GetDescendants() do
 			if desc:IsA("BasePart") and desc.Name == "Leaf" then
-				desc.CanCollide = false
-				desc.Massless = true
+				desc.CanCollide = false; desc.Massless = true
 			end
 		end
-		-- Unanchor the whole rig (WeldConstraints hold it together) and let
-		-- the physics engine handle the fall — this looks far more realistic
-		-- than the scripted pivot because the trunk bounces off the terrain.
 		for _, desc in model:GetDescendants() do
-			if desc:IsA("BasePart") then
-				desc.Anchored = false
-			end
+			if desc:IsA("BasePart") then desc.Anchored = false end
 		end
-		-- Apply a random tipping angular velocity so it falls in a
-		-- believable direction and speed.
 		local tipX = (rng:NextNumber() < 0.5 and 1 or -1) * rng:NextNumber(1.0, 1.8)
-		local tipZ = rng:NextNumber(-0.6, 0.6)
-		trunk.AssemblyAngularVelocity = Vector3.new(tipX, 0, tipZ)
-		-- Wait for it to crash down and settle, then remove the debris.
+		trunk.AssemblyAngularVelocity = Vector3.new(tipX, 0, rng:NextNumber(-0.6, 0.6))
 		task.wait(5)
-		if model and model.Parent then
-			model:Destroy()
-		end
+		if model and model.Parent then model:Destroy() end
 	end)
 end
 
--- ============================ public API ===========================
+-- ══════════════════════════════ public API ══════════════════════════
 
 function Forest.getTree(uid: string): Model?
 	local entry = registry[uid]
 	return entry and entry.model or nil
 end
 
--- Update the floating HP bar after a swing. frac is current/max in [0,1].
 function Forest.updateHealthBar(model: Model, frac: number)
 	local trunk = model.PrimaryPart
-	if not trunk then
-		return
-	end
+	if not trunk then return end
 	local hb = trunk:FindFirstChild("HealthBar")
-	if not hb or not hb:IsA("BillboardGui") then
-		return
-	end
+	if not hb or not hb:IsA("BillboardGui") then return end
 	hb.Enabled = frac < 0.999
 	local bg = hb:FindFirstChildOfClass("Frame")
 	local fill = bg and bg:FindFirstChild("Fill")
@@ -263,28 +195,21 @@ function Forest.updateHealthBar(model: Model, frac: number)
 	end
 end
 
--- Fell a tree: returns the species id + number of logs yielded, runs the
--- topple animation, drops props, and schedules a regrow at the same spot.
--- Returns nil if the uid is unknown (already felled / never existed).
 function Forest.fell(uid: string): { speciesId: string, logs: number }?
 	local entry = registry[uid]
-	if not entry then
-		return nil
-	end
+	if not entry then return nil end
 	registry[uid] = nil
 	local species = Wood.get(entry.speciesId) :: Wood.Species
 	local logs = rng:NextInteger(species.logsMin, species.logsMax)
-
 	local trunk = entry.model.PrimaryPart
-	local groundY = trunk and (trunk.Position.Y - species.trunkHeight / 2) or World.surfaceAt(entry.x, entry.z)
+	local groundY = trunk and (trunk.Position.Y - species.trunkHeight / 2)
+		or World.surfaceAt(entry.x, entry.z)
 	dropLogProps(species, entry.x, groundY, entry.z)
 	toppleAndRemove(entry.model)
-
 	local x, z, speciesId = entry.x, entry.z, entry.speciesId
 	task.delay(F.RegrowSeconds, function()
 		plantAt(x, z, speciesId)
 	end)
-
 	return { speciesId = species.id, logs = logs }
 end
 
@@ -296,32 +221,27 @@ function Forest.start()
 	local placed: { Vector2 } = {}
 	local attempts = 0
 	local maxAttempts = F.TreeCount * 30
+
 	while #placed < F.TreeCount and attempts < maxAttempts do
 		attempts += 1
-		-- Uniform-by-area placement in the [MinRadius, MaxRadius] ring.
 		local angle = rng:NextNumber() * math.pi * 2
 		local t = rng:NextNumber()
 		local radius = math.sqrt(t * (F.MaxRadius ^ 2 - F.MinRadius ^ 2) + F.MinRadius ^ 2)
 		local x = math.cos(angle) * radius
 		local z = math.sin(angle) * radius
 
-		-- Don't plant in the lake / on the shoreline.
-		if World.surfaceAt(x, z) < 0.5 then
-			continue
-		end
-		-- Respect minimum spacing.
+		-- Exclusion zones
+		local onRoad = math.abs(x) < 18 and z < F.NorthOnly_MinZ
+		local inTown = z < F.NorthOnly_MinZ - 20
+		if onRoad or inTown then continue end
+		if World.surfaceAt(x, z) < 0.5 then continue end
+
 		local spot = Vector2.new(x, z)
 		local ok = true
 		for _, other in placed do
-			if (spot - other).Magnitude < F.MinSpacing then
-				ok = false
-				break
-			end
+			if (spot - other).Magnitude < F.MinSpacing then ok = false; break end
 		end
-		if not ok then
-			continue
-		end
-
+		if not ok then continue end
 		table.insert(placed, spot)
 		plantAt(x, z, pickSpeciesId())
 	end
