@@ -6,22 +6,26 @@
 --   +Z  ────────────────────────────────────────────────────────────
 --        FOREST HILLS  (pine, oak, redwood on rolling terrain)
 --        Dirt logging roads branch through here.
---   z=+150
---        FLAT LOGGING YARD  (spawn, truck parking, flat ground)
+--   z=+140
+--        FLAT LOGGING YARD  (spawn, truck parking)
 --   z=0  [SPAWN]
---        Paved road leaves the yard heading SOUTH (decreasing Z)
---   z=-130
---        TUNNEL HILL  (terrain rises either side; road punches through)
---   z=-270  [TUNNEL]
---   z=-390
---        VALLEY — post-tunnel, flatter ground
---        SAWMILL  at z=-420
---        Road continues south...
---   z=-560  [SHOP — Big Dale, NPC dealer]
+--        Paved road leaves the yard heading SOUTH
+--   z=-213
+--        TUNNEL through the ridge (concrete tube, rock roof above)
+--   z=-327
+--        VALLEY — SAWMILL at z=-420
+--   z=-560  [BIG DALE'S SHOP]
 --   -Z  ────────────────────────────────────────────────────────────
 --
--- World.surfaceAt(x,z) is the authoritative heightmap used both by the
--- terrain generator and by Forest to plant trees on the surface.
+-- World.surfaceAt(x,z) is the authoritative heightmap used by both the
+-- terrain generator and Forest (tree planting) and roads.
+--
+-- TERRAIN GRID GOTCHA: cells are CellSize (16) wide with centres at
+-- -HalfExtent + k*16, which does NOT include x=0 (HalfExtent=620 →
+-- centres at ...,-12, 4, 20,...). The flat tunnel corridor therefore
+-- spans cells -12 and 4 → x ∈ [-20, 12], centred at x=-4, NOT 0. The
+-- tunnel tube parts are centred on TUNNEL_CX=-4 to sit inside it; the
+-- 16-stud-wide paved road at x=0 fits with room to spare.
 
 local Workspace = game:GetService("Workspace")
 
@@ -68,21 +72,19 @@ function World.surfaceAt(x: number, z: number): number
 		surface = math.min(surface, -T.LakeDepth * smoothstep(1 - dl / T.LakeRadius))
 	end
 
-	-- Tunnel hill: raised ridge south of the yard; road corridor stays flat.
-	-- The tunnel model provides ceiling/walls at road level inside the hill.
+	-- Tunnel hill. The corridor is widened by half a terrain cell so the
+	-- offset cell grid can't jut rock into the road (see file-top gotcha).
 	local dth = math.abs(z - T.TunnelHillZ)
 	if dth < T.TunnelHillRadius then
 		local bump = T.TunnelHillHeight * smoothstep(1 - dth / T.TunnelHillRadius)
-		if math.abs(x) > T.TunnelRoadHW then
-			-- Sides of the hill rise up.
+		if math.abs(x) > T.TunnelRoadHW + T.CellSize / 2 then
 			surface = math.max(surface, bump)
 		else
-			-- Road corridor: keep flat even inside the raised hill.
 			surface = math.min(surface, 0)
 		end
 	end
 
-	-- Valley floor south of the tunnel: gently flatten for the mill/shop area.
+	-- Valley floor south of the tunnel: flatten for the mill/shop town.
 	if z < T.TunnelHillZ - T.TunnelHillRadius then
 		local valleyT = math.clamp(
 			(-(z - (T.TunnelHillZ - T.TunnelHillRadius))) / 120, 0, 1)
@@ -131,6 +133,19 @@ local function generateTerrain()
 						Vector3.new(cell, wh, cell), Enum.Material.Water)
 				end
 			end
+			-- Roof the tunnel: rock above the concrete tube so the ridge
+			-- reads continuous (a real hill you drive UNDER, not a slot
+			-- canyon). Tube ceiling tops out at y=20; rock fills 22→bump.
+			local dth = math.abs(z - T.TunnelHillZ)
+			if math.abs(x) <= T.TunnelRoadHW + cell / 2
+				and dth <= T.TunnelTubeHalf then
+				local bump = T.TunnelHillHeight * smoothstep(1 - dth / T.TunnelHillRadius)
+				local roofBase = 22
+				if bump > roofBase + 1 then
+					terrain:FillBlock(CFrame.new(x, (roofBase + bump) / 2, z),
+						Vector3.new(cell, bump - roofBase, cell), Enum.Material.Rock)
+				end
+			end
 		end
 	end
 end
@@ -142,7 +157,7 @@ local function buildSpawn()
 	spawn.Name = "YardSpawn"
 	spawn.Anchored = true
 	spawn.Size = Vector3.new(16, 1, 16)
-	spawn.CFrame = CFrame.new(0, 0.5, 20)	-- slightly north of centre, faces south
+	spawn.CFrame = CFrame.new(0, 0.5, 20)
 	spawn.Material = Enum.Material.WoodPlanks
 	spawn.Color = Color3.fromRGB(120, 90, 58)
 	spawn.Duration = 0
@@ -155,7 +170,6 @@ local function buildSpawn()
 			Position = Vector3.new(rx, 2, 60),
 			Color = Color3.fromRGB(86, 60, 38), Material = Enum.Material.Wood })
 		rack.Parent = Workspace
-		-- Stacked log rounds on the rack
 		for k = 0, 2 do
 			local logStack = part({ Name = "LogStack",
 				Shape = Enum.PartType.Cylinder,
@@ -166,7 +180,7 @@ local function buildSpawn()
 		end
 	end
 
-	-- Welcome sign facing south (players see it as they walk toward the road)
+	-- Welcome sign facing south (players see it walking toward the road)
 	local sign = part({ Name = "WelcomeSign",
 		Size = Vector3.new(22, 7, 0.6),
 		Position = Vector3.new(0, 5, -28),
@@ -189,7 +203,7 @@ local function buildSpawn()
 	sub.Size = UDim2.fromScale(1, 0.44)
 	sub.BackgroundTransparency = 1
 	sub.Font = Enum.Font.GothamMedium
-	sub.Text = "Chop north  •  Drive south to the mill  •  See Big Dale for upgrades"
+	sub.Text = "Chop north  •  Truck loads nearby logs  •  Mill is south through the tunnel"
 	sub.TextColor3 = Color3.fromRGB(230, 235, 245)
 	sub.TextScaled = true
 	sub.Parent = gui
@@ -214,22 +228,22 @@ local function buildRoads()
 		end
 	end
 
-	-- Paved main road: yard (z=-30) south all the way past the mill to the shop
+	-- Paved main road: yard south past the mill to the shop
 	roadSeg(0, -30, 0, -600, 16, Enum.Material.Pavement)
 
-	-- Turning apron in front of the yard
+	-- Turning apron at the yard end
 	terrain:FillBlock(CFrame.new(0, -0.5, -30),
 		Vector3.new(32, 1.5, 28), Enum.Material.Pavement)
 
-	-- Painted centre line (bright stripe)
+	-- Painted centre line
 	roadSeg(0, -30, 0, -600, 1.5, Enum.Material.SmoothPlastic)
 
-	-- Road shoulder markings (decorative concrete strips each side)
+	-- Shoulder strips
 	for _, sx in { 9, -9 } do
 		roadSeg(sx, -30, sx, -600, 1.2, Enum.Material.Concrete)
 	end
 
-	-- Dirt logging road NORTH through the forest (from yard edge)
+	-- Dirt logging road NORTH through the forest
 	local northRoad = {
 		{0, 140}, {0, 200}, {18, 260}, {40, 320}, {70, 375}, {95, 420},
 	}
@@ -256,7 +270,7 @@ local function buildRoads()
 			nwRoad[i+1][1], nwRoad[i+1][2], 9, Enum.Material.Ground)
 	end
 
-	-- Dirt road east spur (flatter east slope)
+	-- Dirt road east spur
 	local eRoad = {
 		{80, 50}, {130, 80}, {185, 120}, {230, 165}, {260, 210},
 	}
@@ -274,19 +288,22 @@ local function buildRoads()
 			wRoad[i+1][1], wRoad[i+1][2], 8, Enum.Material.Ground)
 	end
 
-	-- Small paved spur into the mill log yard (branch off main road)
+	-- Paved spur into the mill log yard
 	roadSeg(-24, M.Position.Z, M.Position.X - 24, M.Position.Z, 10, Enum.Material.Pavement)
 end
 
 -- ═════════════════════════════════ tunnel ═══════════════════════════
 
 local function buildTunnel()
-	local TZ = T.TunnelHillZ           -- -270
-	local HALF = T.TunnelHillRadius * 0.44 -- half length of the actual tunnel tube (~57)
-	local W = T.TunnelRoadHW * 2 + 4  -- interior width (~26)
-	local H = 16                       -- interior height
-	local WT = 2.8                     -- wall thickness
-	local CT = 4                       -- ceiling thickness
+	local TZ = T.TunnelHillZ
+	local HALF = T.TunnelTubeHalf
+	-- Centre the tube on the flat terrain corridor (x ∈ [-20, 12] — see
+	-- the grid gotcha at the top of this file), NOT on x=0.
+	local CX = -4
+	local W = T.TunnelRoadHW * 2 + 4 -- interior width (26)
+	local H = 16 -- interior height
+	local WT = 2.8 -- wall thickness
+	local CT = 4 -- ceiling thickness
 	local STONE = Color3.fromRGB(84, 80, 74)
 	local CONC = Color3.fromRGB(100, 97, 92)
 	local ARCH_STEPS = 16
@@ -306,67 +323,65 @@ local function buildTunnel()
 		return p2
 	end
 
-	-- Build arch sections
+	local function addp(props: { [string]: any }): Part
+		local p2 = mp(props)
+		p2.Parent = model
+		return p2
+	end
+
+	-- Tube sections
 	for i = 0, ARCH_STEPS - 1 do
 		local sz = (TZ - HALF) + i * SECT_LEN + SECT_LEN / 2
-		local sl = SECT_LEN + 0.15 -- slight overlap
+		local sl = SECT_LEN + 0.15
 
-		-- Left wall
-		mp({ Name = "TWallL", Size = Vector3.new(WT, H + CT, sl),
-			Position = Vector3.new(-(W / 2 + WT / 2), (H + CT) / 2, sz),
-			Color = CONC }):Parent(model)
-
-		-- Right wall
-		mp({ Name = "TwallR", Size = Vector3.new(WT, H + CT, sl),
-			Position = Vector3.new(W / 2 + WT / 2, (H + CT) / 2, sz),
-			Color = CONC }):Parent(model)
-
-		-- Ceiling
-		mp({ Name = "TCeil", Size = Vector3.new(W + WT * 2, CT, sl),
-			Position = Vector3.new(0, H + CT / 2, sz),
-			Color = CONC }):Parent(model)
+		addp({ Name = "TWallL", Size = Vector3.new(WT, H + CT, sl),
+			Position = Vector3.new(CX - (W / 2 + WT / 2), (H + CT) / 2, sz),
+			Color = CONC })
+		addp({ Name = "TWallR", Size = Vector3.new(WT, H + CT, sl),
+			Position = Vector3.new(CX + W / 2 + WT / 2, (H + CT) / 2, sz),
+			Color = CONC })
+		addp({ Name = "TCeil", Size = Vector3.new(W + WT * 2, CT, sl),
+			Position = Vector3.new(CX, H + CT / 2, sz),
+			Color = CONC })
 
 		-- Ceiling light strip every other section
 		if i % 2 == 0 then
-			local lamp = mp({ Name = "TunnelLight",
+			addp({ Name = "TunnelLight",
 				Size = Vector3.new(W - 4, 0.45, 1.4),
-				Position = Vector3.new(0, H - 0.3, sz),
+				Position = Vector3.new(CX, H - 0.3, sz),
 				Color = Color3.fromRGB(255, 248, 210),
 				Material = Enum.Material.Neon,
 				CanCollide = false })
-			lamp.Parent = model
 		end
 
-		-- Road kerb (low trim strips inside at road level)
-		for _, kx in { W / 2 - 0.8, -(W / 2 - 0.8) } do
-			mp({ Name = "Kerb", Size = Vector3.new(0.9, 0.7, sl),
+		-- Kerbs
+		for _, kx in { CX + W / 2 - 0.8, CX - (W / 2 - 0.8) } do
+			addp({ Name = "Kerb", Size = Vector3.new(0.9, 0.7, sl),
 				Position = Vector3.new(kx, 0.35, sz),
-				Color = Color3.fromRGB(230, 228, 222) }):Parent(model)
+				Color = Color3.fromRGB(230, 228, 222) })
 		end
 	end
 
-	-- Portal frames (decorative stone frames at each tunnel mouth)
+	-- Portal frames at each mouth
 	for _, pz in { TZ - HALF - 0.5, TZ + HALF + 0.5 } do
-		-- Side pilasters
-		for _, px in { -(W / 2 + WT + 1.5), W / 2 + WT + 1.5 } do
-			mp({ Name = "Portal",
-				Size = Vector3.new(3.5, H + CT + 6, 3.5),
-				Position = Vector3.new(px, (H + CT + 6) / 2, pz),
-				Color = STONE }):Parent(model)
+		for _, px in { CX - (W / 2 + WT + 1.5), CX + W / 2 + WT + 1.5 } do
+			addp({ Name = "Portal",
+				Size = Vector3.new(3.5, H + CT + 4, 3.5),
+				Position = Vector3.new(px, (H + CT + 4) / 2, pz),
+				Color = STONE })
 		end
-		-- Lintel
-		mp({ Name = "Lintel",
-			Size = Vector3.new(W + WT * 2 + 10, 3.5, 3.5),
-			Position = Vector3.new(0, H + CT + 5, pz),
-			Color = STONE }):Parent(model)
-		-- "BIG TIMBER" carved portal sign
-		local sign = mp({ Name = "PortalSign",
-			Size = Vector3.new(W + WT * 2 + 6, 2.0, 0.5),
-			Position = Vector3.new(0, H + CT + 2, pz - (pz < 0 and -0.3 or 0.3)),
+		addp({ Name = "Lintel",
+			Size = Vector3.new(W + WT * 2 + 10, 3.0, 3.5),
+			Position = Vector3.new(CX, H + CT + 1, pz),
+			Color = STONE })
+		-- Portal sign over the mouth. Face the side a driver approaches
+		-- from: north portal → Back (+Z) face, south portal → Front (-Z).
+		local sign = addp({ Name = "PortalSign",
+			Size = Vector3.new(W + 4, 2.4, 0.5),
+			Position = Vector3.new(CX, H + 2, pz),
 			Color = Color3.fromRGB(60, 56, 50), CanCollide = false })
-		sign.Parent = model
 		local sg = Instance.new("SurfaceGui")
-		sg.Face = if pz < 0 then Enum.NormalId.Back else Enum.NormalId.Front
+		sg.Face = if pz > TZ then Enum.NormalId.Back else Enum.NormalId.Front
 		sg.CanvasSize = Vector2.new(400, 80)
 		sg.Parent = sign
 		local sl2 = Instance.new("TextLabel")
@@ -383,7 +398,11 @@ local function buildTunnel()
 end
 
 -- ══════════════════════════════════ mill ════════════════════════════
--- (Same detailed mill as before, repositioned to GameConfig.Mill.Position)
+-- Industrial layout: log yard/rollway (south) → debarker → sash saw with
+-- log carriage → green chain conveyor → edger → board stacking yard.
+-- Named parts animated by MillService: DebarkerDrum, SawBlade (strokes
+-- up/down), Carriage (rides through the saw), GreenChain/GCRoller,
+-- EdgerBlade. IntakePad marks the unload zone (position from GameConfig).
 
 local function buildMill()
 	local P = M.Position
@@ -412,7 +431,8 @@ local function buildMill()
 	end
 
 	local function add(p2: Part): Part
-		p2.Parent = model; return p2
+		p2.Parent = model
+		return p2
 	end
 
 	-- Concrete apron
@@ -422,7 +442,7 @@ local function buildMill()
 		Color = Color3.fromRGB(118, 116, 112), Material = Enum.Material.Concrete }))
 	model.PrimaryPart = apron
 
-	-- Steel frame posts
+	-- Steel frame + roof
 	for _, px in { -22, 0, 22 } do
 		for _, pz in { -14, 14 } do
 			add(mp({ Name = "Post", Size = Vector3.new(1.0, 22, 1.0),
@@ -435,7 +455,6 @@ local function buildMill()
 			Position = P + Vector3.new(0, 21.6, pz),
 			Color = STEEL, Material = Enum.Material.Metal }))
 	end
-	-- Gabled roof
 	add(mp({ Name = "RoofL", Size = Vector3.new(52, 0.55, 18),
 		CFrame = CFrame.new(P + Vector3.new(-11, 22.5, 0)) * CFrame.Angles(0, 0, math.rad(18)),
 		Color = ROOF_C, Material = Enum.Material.Metal }))
@@ -480,20 +499,20 @@ local function buildMill()
 			Color = MC, Material = Enum.Material.Metal, CanCollide = false }))
 	end
 
-	-- Band-saw columns + wheels + blade
+	-- Sash saw: tall frame columns + a blade that strokes UP AND DOWN
 	for _, sx in { -3.5, 3.5 } do
 		add(mp({ Name = "SawColumn", Size = Vector3.new(0.9, 14, 0.9),
 			Position = P + Vector3.new(sx, 7, 5),
 			Color = STEEL, Material = Enum.Material.Metal }))
 	end
-	for _, sy in { 13.5, 1.5 } do
-		add(cyl({ Name = "SawWheel", Size = Vector3.new(1.5, 5.0, 5.0),
-			CFrame = CFrame.new(P + Vector3.new(0, sy, 5)),
-			Color = Color3.fromRGB(55, 58, 62), Material = Enum.Material.Metal }))
-	end
-	add(mp({ Name = "SawBlade", Size = Vector3.new(0.22, 12, 0.9),
-		Position = P + Vector3.new(0, 7.5, 5),
-		Color = Color3.fromRGB(210, 215, 222), Material = Enum.Material.Metal, Reflectance = 0.35 }))
+	add(mp({ Name = "SawCrossHead", Size = Vector3.new(8.2, 1.2, 1.2),
+		Position = P + Vector3.new(0, 14, 5),
+		Color = STEEL, Material = Enum.Material.Metal }))
+	add(mp({ Name = "SawBlade",
+		Size = Vector3.new(0.22, 9, 0.9),
+		Position = P + Vector3.new(0, 6.5, 5),
+		Color = Color3.fromRGB(210, 215, 222), Material = Enum.Material.Metal,
+		Reflectance = 0.35, CanCollide = false }))
 	for _, gy in { 13, 2 } do
 		add(mp({ Name = "BladeGuard", Size = Vector3.new(9, 2.5, 4),
 			Position = P + Vector3.new(0, gy, 5),
@@ -503,7 +522,7 @@ local function buildMill()
 		CFrame = CFrame.new(P + Vector3.new(0, 2.5, 8)) * CFrame.Angles(0, 0, math.rad(-12)),
 		Color = WOOD }))
 
-	-- Log carriage + rails
+	-- Log carriage + rails (carriage rides THROUGH the saw at z=+5)
 	for _, crx in { -5, 5 } do
 		add(mp({ Name = "Rail", Size = Vector3.new(0.55, 0.55, 22),
 			Position = P + Vector3.new(crx, 1.0, 4),
@@ -518,7 +537,7 @@ local function buildMill()
 			Color = STEEL, Material = Enum.Material.Metal }))
 	end
 
-	-- Green chain
+	-- Green chain conveyor
 	local gcFolder = Instance.new("Folder")
 	gcFolder.Name = "GreenChain"
 	gcFolder.Parent = model
@@ -537,7 +556,7 @@ local function buildMill()
 			Color = Color3.fromRGB(36, 96, 36), Material = Enum.Material.Metal }))
 	end
 
-	-- Edger
+	-- Edger station
 	add(mp({ Name = "EdgerFrame", Size = Vector3.new(6, 8, 6),
 		Position = P + Vector3.new(16, 4, 10),
 		Color = STEEL, Material = Enum.Material.Metal }))
@@ -547,7 +566,7 @@ local function buildMill()
 			Color = MC, Material = Enum.Material.Metal, Reflectance = 0.3 }))
 	end
 
-	-- Board stacking yard + forklift
+	-- Board stacking yard
 	add(mp({ Name = "StackingPad", Size = Vector3.new(22, 0.5, 30),
 		Position = P + Vector3.new(34, 0.25, -2),
 		Color = Color3.fromRGB(106, 104, 100), Material = Enum.Material.Concrete }))
@@ -557,10 +576,12 @@ local function buildMill()
 			Color = Color3.fromRGB(205, 170, 110), Material = Enum.Material.WoodPlanks }))
 	end
 
-	-- Intake pad (glowing, where trucks pull up to unload)
+	-- Intake pad — position MUST come from GameConfig so the unload
+	-- detection in MillService is centred on the same spot.
+	local padCenter = P + M.IntakePadOffset + Vector3.new(0, 0.4, 0)
 	add(cyl({ Name = "IntakePad",
 		Size = Vector3.new(0.55, M.IntakeRadius * 2, M.IntakeRadius * 2),
-		CFrame = CFrame.new(P + Vector3.new(0, 0.4, -22)) * CFrame.Angles(0, 0, math.rad(90)),
+		CFrame = CFrame.new(padCenter) * CFrame.Angles(0, 0, math.rad(90)),
 		Color = Color3.fromRGB(90, 220, 120), Material = Enum.Material.Neon,
 		Transparency = 0.40, CanCollide = false }))
 
@@ -585,17 +606,15 @@ local function buildMill()
 end
 
 -- ══════════════════════════════════ shop ════════════════════════════
--- Big Dale's Equipment shop: a building with an NPC dealer inside.
--- The actual ProximityPrompt + OpenShop firing is in ShopNPC.luau;
--- here we just build the physical structure.
+-- Big Dale's Equipment: log-cabin building. The NPC itself (and the
+-- ProximityPrompt that opens the buy dialog) lives in ShopNPC.luau.
 
 local function buildShop()
-	local P = S.Position -- (0, 0, -560)
+	local P = S.Position
 	local model = Instance.new("Model")
 	model.Name = "Shop"
 	local LOG_WALL = Color3.fromRGB(100, 72, 50)
 	local ROOF_C = Color3.fromRGB(70, 44, 36)
-	local TRIM = Color3.fromRGB(220, 200, 140)
 
 	local function mp(props: { [string]: any }): Part
 		local p2 = Instance.new("Part")
@@ -608,74 +627,71 @@ local function buildShop()
 		return p2
 	end
 
-	-- Concrete foundation
-	mp({ Name = "Foundation", Size = Vector3.new(36, 0.8, 28),
+	local function addp(props: { [string]: any }): Part
+		local p2 = mp(props)
+		p2.Parent = model
+		return p2
+	end
+
+	addp({ Name = "Foundation", Size = Vector3.new(36, 0.8, 28),
 		Position = P + Vector3.new(0, -0.4, 0),
-		Color = Color3.fromRGB(110, 108, 104), Material = Enum.Material.Concrete }):Parent(model)
+		Color = Color3.fromRGB(110, 108, 104), Material = Enum.Material.Concrete })
 
-	-- Log-cabin style walls (south face open for entry)
-	-- North wall
-	mp({ Name = "WallN", Size = Vector3.new(36, 14, 1.0),
+	-- Log-cabin walls; door opening on the south face
+	addp({ Name = "WallN", Size = Vector3.new(36, 14, 1.0),
 		Position = P + Vector3.new(0, 7, 14),
-		Color = LOG_WALL, Material = Enum.Material.Wood }):Parent(model)
-	-- East wall
-	mp({ Name = "WallE", Size = Vector3.new(1.0, 14, 28),
+		Color = LOG_WALL, Material = Enum.Material.Wood })
+	addp({ Name = "WallE", Size = Vector3.new(1.0, 14, 28),
 		Position = P + Vector3.new(18, 7, 0),
-		Color = LOG_WALL, Material = Enum.Material.Wood }):Parent(model)
-	-- West wall
-	mp({ Name = "WallW", Size = Vector3.new(1.0, 14, 28),
+		Color = LOG_WALL, Material = Enum.Material.Wood })
+	addp({ Name = "WallW", Size = Vector3.new(1.0, 14, 28),
 		Position = P + Vector3.new(-18, 7, 0),
-		Color = LOG_WALL, Material = Enum.Material.Wood }):Parent(model)
-	-- South wall with door opening (two side panels + header)
-	mp({ Name = "DoorL", Size = Vector3.new(11, 14, 1.0),
+		Color = LOG_WALL, Material = Enum.Material.Wood })
+	addp({ Name = "DoorL", Size = Vector3.new(11, 14, 1.0),
 		Position = P + Vector3.new(-12.5, 7, -14),
-		Color = LOG_WALL, Material = Enum.Material.Wood }):Parent(model)
-	mp({ Name = "DoorR", Size = Vector3.new(11, 14, 1.0),
+		Color = LOG_WALL, Material = Enum.Material.Wood })
+	addp({ Name = "DoorR", Size = Vector3.new(11, 14, 1.0),
 		Position = P + Vector3.new(12.5, 7, -14),
-		Color = LOG_WALL, Material = Enum.Material.Wood }):Parent(model)
-	mp({ Name = "DoorHeader", Size = Vector3.new(14, 3, 1.0),
+		Color = LOG_WALL, Material = Enum.Material.Wood })
+	addp({ Name = "DoorHeader", Size = Vector3.new(14, 3, 1.0),
 		Position = P + Vector3.new(0, 11.5, -14),
-		Color = LOG_WALL, Material = Enum.Material.Wood }):Parent(model)
+		Color = LOG_WALL, Material = Enum.Material.Wood })
 
-	-- Roof (simple gable)
-	mp({ Name = "RoofL", Size = Vector3.new(40, 0.6, 18),
+	-- Gable roof
+	addp({ Name = "RoofL", Size = Vector3.new(40, 0.6, 18),
 		CFrame = CFrame.new(P + Vector3.new(-9, 16.5, 0)) * CFrame.Angles(0, 0, math.rad(20)),
-		Color = ROOF_C, Material = Enum.Material.Metal }):Parent(model)
-	mp({ Name = "RoofR", Size = Vector3.new(40, 0.6, 18),
+		Color = ROOF_C, Material = Enum.Material.Metal })
+	addp({ Name = "RoofR", Size = Vector3.new(40, 0.6, 18),
 		CFrame = CFrame.new(P + Vector3.new(9, 16.5, 0)) * CFrame.Angles(0, 0, math.rad(-20)),
-		Color = ROOF_C, Material = Enum.Material.Metal }):Parent(model)
+		Color = ROOF_C, Material = Enum.Material.Metal })
 
-	-- Interior floor
-	mp({ Name = "Floor", Size = Vector3.new(34, 0.5, 26),
+	-- Interior
+	addp({ Name = "Floor", Size = Vector3.new(34, 0.5, 26),
 		Position = P + Vector3.new(0, 0.25, 0),
-		Color = Color3.fromRGB(110, 80, 54), Material = Enum.Material.WoodPlanks }):Parent(model)
-
-	-- Counter / desk where Dale stands
-	mp({ Name = "Counter", Size = Vector3.new(14, 3.5, 3),
+		Color = Color3.fromRGB(110, 80, 54), Material = Enum.Material.WoodPlanks })
+	addp({ Name = "Counter", Size = Vector3.new(14, 3.5, 3),
 		Position = P + Vector3.new(0, 1.75, 8),
-		Color = Color3.fromRGB(130, 96, 62), Material = Enum.Material.WoodPlanks }):Parent(model)
-	mp({ Name = "CounterTop", Size = Vector3.new(14.5, 0.4, 3.5),
+		Color = Color3.fromRGB(130, 96, 62), Material = Enum.Material.WoodPlanks })
+	addp({ Name = "CounterTop", Size = Vector3.new(14.5, 0.4, 3.5),
 		Position = P + Vector3.new(0, 3.7, 8),
-		Color = Color3.fromRGB(90, 68, 46), Material = Enum.Material.Wood }):Parent(model)
+		Color = Color3.fromRGB(90, 68, 46), Material = Enum.Material.Wood })
 
-	-- Shelves with equipment props
 	for _, sx in { -13, 13 } do
-		mp({ Name = "Shelf", Size = Vector3.new(0.5, 10, 22),
+		addp({ Name = "Shelf", Size = Vector3.new(0.5, 10, 22),
 			Position = P + Vector3.new(sx, 5, 2),
-			Color = LOG_WALL, Material = Enum.Material.Wood }):Parent(model)
+			Color = LOG_WALL, Material = Enum.Material.Wood })
 		for k = 0, 3 do
-			mp({ Name = "ShelfPlank", Size = Vector3.new(1.5, 0.35, 20),
+			addp({ Name = "ShelfPlank", Size = Vector3.new(1.5, 0.35, 20),
 				Position = P + Vector3.new(sx + (sx > 0 and -0.7 or 0.7), 2.5 + k * 2.5, 2),
-				Color = Color3.fromRGB(140, 105, 68), Material = Enum.Material.WoodPlanks }):Parent(model)
+				Color = Color3.fromRGB(140, 105, 68), Material = Enum.Material.WoodPlanks })
 		end
 	end
 
-	-- Hanging sign above door
-	local sign = mp({ Name = "ShopSign",
+	-- Hanging sign above the door
+	local sign = addp({ Name = "ShopSign",
 		Size = Vector3.new(14, 4, 0.6),
 		Position = P + Vector3.new(0, 16.5, -14.5),
 		Color = Color3.fromRGB(80, 54, 32) })
-	sign.Parent = model
 	local sg = Instance.new("SurfaceGui")
 	sg.Face = Enum.NormalId.Back
 	sg.CanvasSize = Vector2.new(420, 120)
@@ -698,10 +714,9 @@ local function buildShop()
 	sl2.TextScaled = true
 	sl2.Parent = sg
 
-	-- Outdoor parking/approach pad
-	mp({ Name = "Approach", Size = Vector3.new(36, 0.5, 22),
+	addp({ Name = "Approach", Size = Vector3.new(36, 0.5, 22),
 		Position = P + Vector3.new(0, 0.25, -24),
-		Color = Color3.fromRGB(110, 108, 104), Material = Enum.Material.Concrete }):Parent(model)
+		Color = Color3.fromRGB(110, 108, 104), Material = Enum.Material.Concrete })
 
 	model.Parent = Workspace
 end

@@ -37,6 +37,9 @@ type RigEntry = {
 	pilot: Humanoid?,
 	mover: Mover,
 	yawCFrame: CFrame?,
+	-- Smoothed ground normal so the truck pitches with the terrain
+	-- instead of hovering dead-level up hills.
+	smoothUp: Vector3?,
 }
 
 local registry: { [Player]: RigEntry } = {}
@@ -838,7 +841,32 @@ RunService.Heartbeat:Connect(function(dt)
 		local cf = entry.yawCFrame or CFrame.new()
 		cf = cf * CFrame.Angles(0, -steer * yawRate * dt, 0)
 		entry.yawCFrame = cf
-		if entry.mover.orient then entry.mover.orient.CFrame = cf end
+
+		-- Terrain-following pitch/roll: sample the ground normal under the
+		-- truck and tilt the orientation target to match, so it noses up
+		-- climbing a hill instead of hovering level.
+		local rp = RaycastParams.new()
+		rp.FilterType = Enum.RaycastFilterType.Exclude
+		local filter: { Instance } = { entry.model }
+		local pilotChar = entry.pilot and entry.pilot.Parent
+		if pilotChar then
+			table.insert(filter, pilotChar)
+		end
+		rp.FilterDescendantsInstances = filter
+		local hit = Workspace:Raycast(
+			root.Position + Vector3.new(0, 3, 0), Vector3.new(0, -14, 0), rp)
+		local targetUp = if hit then hit.Normal else Vector3.yAxis
+		local sm = (entry.smoothUp or Vector3.yAxis):Lerp(targetUp, math.min(1, 5 * dt))
+		entry.smoothUp = sm
+		local up = sm.Unit
+		local fwdFlat = cf.LookVector
+		local fwdTilted = fwdFlat - up * fwdFlat:Dot(up)
+		if fwdTilted.Magnitude < 0.05 then
+			fwdTilted = fwdFlat
+		end
+		if entry.mover.orient then
+			entry.mover.orient.CFrame = CFrame.lookAlong(Vector3.zero, fwdTilted.Unit, up)
+		end
 	end
 end)
 
@@ -881,6 +909,16 @@ end
 
 function RigService.upgradeAndRespawn(player: Player)
 	RigService.spawn(player)
+end
+
+-- Used by LogService to find where the player's rig is and how many logs
+-- it can hold. Returns nil if no rig is currently spawned.
+function RigService.getRigInfo(player: Player): (Model?, number?)
+	local entry = registry[player]
+	if not entry or not entry.model.Parent then
+		return nil, nil
+	end
+	return entry.model, entry.tier.logCapacity
 end
 
 Remotes.CallRig.OnServerEvent:Connect(function(player)

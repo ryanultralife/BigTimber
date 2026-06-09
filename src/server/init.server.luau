@@ -24,11 +24,13 @@ require(script:WaitForChild("MillService"))
 require(script:WaitForChild("Shop"))
 
 local ShopNPC = require(script:WaitForChild("ShopNPC"))
+local LogService = require(script:WaitForChild("LogService"))
 
 -- Build the world synchronously before any player character spawns.
 World.build()
 Forest.start()
 ShopNPC.spawn()
+LogService.start()
 
 -- When a player's profile loads: equip their tool cosmetic, spawn their rig,
 -- and send the first HUD snapshot.

@@ -13,6 +13,7 @@ local Workspace = game:GetService("Workspace")
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local Remotes = require(Shared:WaitForChild("Remotes"))
 local Tools = require(Shared:WaitForChild("Tools"))
+local GameConfig = require(Shared:WaitForChild("GameConfig"))
 
 local player = Players.LocalPlayer
 local camera = Workspace.CurrentCamera
@@ -23,7 +24,9 @@ local toolTierIndex = 1
 local lastSwing = 0
 
 local function getReach(): number
-	return 15
+	-- Same constant the server validates against (GameConfig is the single
+	-- source of truth) so the marker never lies about what will land.
+	return GameConfig.Chop.ReachStuds
 end
 
 local function getSwingInterval(): number

@@ -10,7 +10,6 @@
 -- This keeps the south road, tunnel, mill and shop clear of trees.
 
 local Workspace = game:GetService("Workspace")
-local Debris = game:GetService("Debris")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local GameConfig = require(Shared:WaitForChild("GameConfig"))
@@ -135,21 +134,6 @@ local function plantAt(x: number, z: number, speciesId: string): Entry
 	return entry
 end
 
-local function dropLogProps(species: Wood.Species, x: number, y: number, z: number)
-	for i = 1, 3 do
-		local log = part({ Name = "LogProp", Shape = Enum.PartType.Cylinder,
-			Size = Vector3.new(4, 1.6, 1.6), Color = species.logColor,
-			Material = Enum.Material.Wood, Anchored = false, CanCollide = true })
-		log.CFrame = CFrame.new(
-			x + rng:NextNumber(-2, 2), y + 2 + i, z + rng:NextNumber(-2, 2))
-			* CFrame.Angles(0, rng:NextNumber() * math.pi, math.rad(rng:NextNumber(-20, 20)))
-		log.AssemblyLinearVelocity = Vector3.new(
-			rng:NextNumber(-6, 6), 6, rng:NextNumber(-6, 6))
-		log.Parent = forestFolder
-		Debris:AddItem(log, 8)
-	end
-end
-
 local function toppleAndRemove(model: Model)
 	task.spawn(function()
 		local trunk = model.PrimaryPart
@@ -164,6 +148,13 @@ local function toppleAndRemove(model: Model)
 		for _, desc in model:GetDescendants() do
 			if desc:IsA("BasePart") then desc.Anchored = false end
 		end
+		-- Falling creak (placeholder built-in pitched low; real audio later).
+		local creak = Instance.new("Sound")
+		creak.SoundId = "rbxasset://sounds/snap.mp3"
+		creak.PlaybackSpeed = 0.3
+		creak.Volume = 0.9
+		creak.Parent = trunk
+		creak:Play()
 		local tipX = (rng:NextNumber() < 0.5 and 1 or -1) * rng:NextNumber(1.0, 1.8)
 		trunk.AssemblyAngularVelocity = Vector3.new(tipX, 0, rng:NextNumber(-0.6, 0.6))
 		task.wait(5)
@@ -195,7 +186,7 @@ function Forest.updateHealthBar(model: Model, frac: number)
 	end
 end
 
-function Forest.fell(uid: string): { speciesId: string, logs: number }?
+function Forest.fell(uid: string): { speciesId: string, logs: number, position: Vector3 }?
 	local entry = registry[uid]
 	if not entry then return nil end
 	registry[uid] = nil
@@ -204,13 +195,13 @@ function Forest.fell(uid: string): { speciesId: string, logs: number }?
 	local trunk = entry.model.PrimaryPart
 	local groundY = trunk and (trunk.Position.Y - species.trunkHeight / 2)
 		or World.surfaceAt(entry.x, entry.z)
-	dropLogProps(species, entry.x, groundY, entry.z)
 	toppleAndRemove(entry.model)
 	local x, z, speciesId = entry.x, entry.z, entry.speciesId
 	task.delay(F.RegrowSeconds, function()
 		plantAt(x, z, speciesId)
 	end)
-	return { speciesId = species.id, logs = logs }
+	-- Position is where LogService scatters the physical logs.
+	return { speciesId = species.id, logs = logs, position = Vector3.new(x, groundY + 2, z) }
 end
 
 function Forest.start()

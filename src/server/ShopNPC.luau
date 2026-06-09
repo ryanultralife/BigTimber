@@ -25,7 +25,9 @@ local function part(props: { [string]: any }): Part
 end
 
 function ShopNPC.spawn()
-	local P = GameConfig.Shop.Position + Vector3.new(0, 0, 9) -- behind the counter
+	-- Counter front face is at z=+6.5 and the slab runs to z=+9.5; stand
+	-- Dale at +11.5 so he's BEHIND it, not inside it.
+	local P = GameConfig.Shop.Position + Vector3.new(0, 0, 11.5)
 
 	local model = Instance.new("Model")
 	model.Name = "BigDale"
