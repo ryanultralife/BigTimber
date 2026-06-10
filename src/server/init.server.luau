@@ -27,10 +27,20 @@ local ShopNPC = require(script:WaitForChild("ShopNPC"))
 local LogService = require(script:WaitForChild("LogService"))
 
 -- Build the world synchronously before any player character spawns.
-World.build()
-Forest.start()
-ShopNPC.spawn()
-LogService.start()
+-- Each phase is pcall-guarded so one failure degrades (missing structure,
+-- loud warning) instead of killing the whole boot — a single bad FillBlock
+-- once took out trees, rigs, and the HUD with it.
+local function phase(name: string, fn: () -> ())
+	local ok, err = pcall(fn)
+	if not ok then
+		warn(("[BigTimber] BOOT PHASE FAILED — %s: %s"):format(name, tostring(err)))
+	end
+end
+
+phase("World.build", World.build)
+phase("Forest.start", Forest.start)
+phase("ShopNPC.spawn", ShopNPC.spawn)
+phase("LogService.start", LogService.start)
 
 -- When a player's profile loads: equip their tool cosmetic, spawn their rig,
 -- and send the first HUD snapshot.

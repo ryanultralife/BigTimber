@@ -36,7 +36,8 @@
 				"ClockTime": 14,
 				"Brightness": 2,
 				"GeographicLatitude": 41,
-				"Outlines": false
+				"Outlines": false,
+				"Technology": "Voxel"
 			}
 		}
 	}

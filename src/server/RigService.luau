@@ -40,6 +40,9 @@ type RigEntry = {
 	-- Smoothed ground normal so the truck pitches with the terrain
 	-- instead of hovering dead-level up hills.
 	smoothUp: Vector3?,
+	-- Motorised cosmetic wheel hinges; tick sets AngularVelocity to match
+	-- ground speed so the wheels visibly roll.
+	wheelMotors: { HingeConstraint }?,
 }
 
 local registry: { [Player]: RigEntry } = {}
@@ -66,6 +69,22 @@ local function cyl(props: { [string]: any }): Part
 	return c
 end
 
+-- WedgePart helper. Default wedge orientation: thin edge at -Z rising to
+-- the full-height vertical face at +Z — which matches our trucks (front
+-- = -Z), so hoods/windshields need no extra rotation.
+local function wedge(props: { [string]: any }): WedgePart
+	local w = Instance.new("WedgePart")
+	w.Anchored = true
+	w.TopSurface = Enum.SurfaceType.Smooth
+	w.BottomSurface = Enum.SurfaceType.Smooth
+	w.CanCollide = true
+	w.Material = Enum.Material.SmoothPlastic
+	for k, v in props do
+		(w :: any)[k] = v
+	end
+	return w
+end
+
 local function weld(root: BasePart, other: BasePart)
 	local w = Instance.new("WeldConstraint")
 	w.Part0 = root
@@ -85,15 +104,46 @@ end
 -- Wheels need axis = X (default) so no rotation — the flat face shows from
 -- the front/rear and the tread shows from the side. ✓
 
+-- Wheels: an INVISIBLE welded collider keeps the driving physics exactly
+-- as before (the truck slides on it), while the VISIBLE tyre+hub hang on
+-- a motorised HingeConstraint so they roll with ground speed — the
+-- Driving-Empire spinning-wheel look without touching the vehicle physics.
 local function wheel(center: Vector3, dia: number, thick: number,
 	col: Color3, hubCol: Color3, model: Model, root: BasePart)
+	local collider = cyl({ Name = "WheelCollider", Size = Vector3.new(thick, dia, dia),
+		CFrame = CFrame.new(center), Transparency = 1 })
+	collider.Parent = model; weld(root, collider)
+
 	local tyre = cyl({ Name = "Wheel", Size = Vector3.new(thick, dia, dia),
-		CFrame = CFrame.new(center), Color = col })
-	tyre.Parent = model; weld(root, tyre)
+		CFrame = CFrame.new(center), Color = col, CanCollide = false })
+	tyre.Massless = true
+	tyre.Parent = model
 	local hub = cyl({ Name = "Hub",
 		Size = Vector3.new(thick + 0.12, dia * 0.52, dia * 0.52),
-		CFrame = CFrame.new(center), Color = hubCol, Material = Enum.Material.Metal })
-	hub.Parent = model; weld(root, hub)
+		CFrame = CFrame.new(center), Color = hubCol, Material = Enum.Material.Metal,
+		CanCollide = false })
+	hub.Massless = true
+	hub.Parent = model
+	weld(tyre, hub)
+
+	-- Axle hinge: attachment X axis = the wheel's cylinder axis.
+	local a0 = Instance.new("Attachment")
+	a0.Name = "AxleA0"
+	a0.Parent = root
+	a0.WorldCFrame = CFrame.new(center)
+	local a1 = Instance.new("Attachment")
+	a1.Name = "AxleA1"
+	a1.Parent = tyre
+	a1.WorldCFrame = CFrame.new(center)
+	local hinge = Instance.new("HingeConstraint")
+	hinge.Name = "WheelMotor"
+	hinge.Attachment0 = a0
+	hinge.Attachment1 = a1
+	hinge.ActuatorType = Enum.ActuatorType.Motor
+	hinge.MotorMaxTorque = 1e9
+	hinge.AngularVelocity = 0
+	hinge:SetAttribute("Radius", dia / 2)
+	hinge.Parent = root
 end
 
 local function seat(model: Model, root: BasePart, cf: CFrame): VehicleSeat
@@ -196,10 +246,16 @@ local function buildPickup(tier: Rigs.RigTier, pos: Vector3): Model
 
 	-- Hood (long, slightly lower than cab roof)
 	local hZ = -L * 0.30
-	-- Hood: CanCollide=false so the interior seat is reachable from outside.
-	local hood = p({ Name = "Hood", Size = Vector3.new(W - 0.3, 2.1, L * 0.34),
-		CFrame = CFrame.new(pos + Vector3.new(0, 1.86, hZ)), Color = bc, CanCollide = false })
+	-- Hood: low and flat (real pickup proportions); CanCollide=false so the
+	-- interior stays reachable.
+	local hood = p({ Name = "Hood", Size = Vector3.new(W - 0.3, 1.35, L * 0.32),
+		CFrame = CFrame.new(pos + Vector3.new(0, 1.55, hZ)), Color = bc, CanCollide = false })
 	hood.Parent = m; weld(ch, hood)
+	-- Sloped nose between grille and hood (wedge thin edge faces front).
+	local nose = wedge({ Name = "Nose", Size = Vector3.new(W - 0.3, 1.0, 1.6),
+		CFrame = CFrame.new(pos + Vector3.new(0, 1.72, -L / 2 + 1.05)),
+		Color = bc, CanCollide = false })
+	nose.Parent = m; weld(ch, nose)
 
 	-- Fender flares
 	for _, fx in { (W - 0.3) / 2 + 0.22, -((W - 0.3) / 2 + 0.22) } do
@@ -224,22 +280,25 @@ local function buildPickup(tier: Rigs.RigTier, pos: Vector3): Model
 			Vector3.new(0.7, 0.52, 0.22), m, ch)
 	end
 
-	-- Cab: CanCollide=false — walls are visual only; player walks through to sit inside
+	-- Cab: tall enough that a SEATED avatar fits fully inside (seat surface
+	-- to ceiling needs ~3.2 studs). CanCollide=false — walls are visual
+	-- only; the player walks through them to reach the seat.
 	local cabZ = L * 0.06
-	local cab = p({ Name = "Cab", Size = Vector3.new(W - 0.1, 2.9, L * 0.30),
-		CFrame = CFrame.new(pos + Vector3.new(0, 2.52, cabZ)), Color = bc, CanCollide = false })
+	local cab = p({ Name = "Cab", Size = Vector3.new(W - 0.1, 4.8, L * 0.30),
+		CFrame = CFrame.new(pos + Vector3.new(0, 3.2, cabZ)), Color = bc, CanCollide = false })
 	cab.Parent = m; weld(ch, cab)
 
-	-- Windshield (glass, angled ~20°)
-	local ws = p({ Name = "Windshield", Size = Vector3.new(W - 0.55, 2.0, 0.18),
-		CFrame = CFrame.new(pos + Vector3.new(0, 2.72, -L * 0.10)) * CFrame.Angles(math.rad(22), 0, 0),
+	-- Windshield: a raked glass WEDGE from the hood top up to the roof line
+	-- (Driving-Empire-style sloped glass instead of a floating plate).
+	local ws = wedge({ Name = "Windshield", Size = Vector3.new(W - 0.5, 3.35, 2.0),
+		CFrame = CFrame.new(pos + Vector3.new(0, 3.9, -L * 0.09 - 1.0)),
 		Color = Color3.fromRGB(190, 220, 255), Material = Enum.Material.Glass,
-		Transparency = 0.5, CanCollide = false })
+		Transparency = 0.45, CanCollide = false })
 	ws.Parent = m; weld(ch, ws)
 
 	-- Rear window (vertical, smaller)
-	local rw = p({ Name = "RearWindow", Size = Vector3.new(W - 0.6, 1.6, 0.15),
-		CFrame = CFrame.new(pos + Vector3.new(0, 2.7, cabZ + L * 0.145)),
+	local rw = p({ Name = "RearWindow", Size = Vector3.new(W - 0.6, 2.2, 0.15),
+		CFrame = CFrame.new(pos + Vector3.new(0, 4.4, cabZ + L * 0.145)),
 		Color = Color3.fromRGB(190, 220, 255), Material = Enum.Material.Glass,
 		Transparency = 0.5, CanCollide = false })
 	rw.Parent = m; weld(ch, rw)
@@ -248,7 +307,7 @@ local function buildPickup(tier: Rigs.RigTier, pos: Vector3): Model
 	local roofC = Color3.fromRGB(
 		math.round(bc.R * 255 * 0.80), math.round(bc.G * 255 * 0.80), math.round(bc.B * 255 * 0.80))
 	local roof = p({ Name = "Roof", Size = Vector3.new(W - 0.08, 0.45, L * 0.29),
-		CFrame = CFrame.new(pos + Vector3.new(0, 3.97, cabZ)), Color = roofC, CanCollide = false })
+		CFrame = CFrame.new(pos + Vector3.new(0, 5.82, cabZ)), Color = roofC, CanCollide = false })
 	roof.Parent = m; weld(ch, roof)
 
 	-- Step rail (running board) below each cab door
@@ -298,7 +357,7 @@ local function buildPickup(tier: Rigs.RigTier, pos: Vector3): Model
 	-- Mirrors (small nubs on cab sides)
 	for _, mx in { W * 0.5 + 0.1, -(W * 0.5 + 0.1) } do
 		local mir = p({ Name = "Mirror", Size = Vector3.new(0.25, 0.5, 0.55),
-			CFrame = CFrame.new(pos + Vector3.new(mx, 3.1, -L * 0.08)),
+			CFrame = CFrame.new(pos + Vector3.new(mx, 3.9, -L * 0.08)),
 			Color = mc, Material = Enum.Material.Metal, CanCollide = false })
 		mir.Parent = m; weld(ch, mir)
 	end
@@ -312,8 +371,8 @@ local function buildPickup(tier: Rigs.RigTier, pos: Vector3): Model
 
 	-- Door windows (side glass panels)
 	for _, wx2 in { (W - 0.1) / 2 + 0.05, -((W - 0.1) / 2 + 0.05) } do
-		local dw = p({ Name = "DoorWindow", Size = Vector3.new(0.14, 1.55, L * 0.22),
-			CFrame = CFrame.new(pos + Vector3.new(wx2, 2.78, cabZ)),
+		local dw = p({ Name = "DoorWindow", Size = Vector3.new(0.14, 2.6, L * 0.22),
+			CFrame = CFrame.new(pos + Vector3.new(wx2, 3.9, cabZ)),
 			Color = Color3.fromRGB(185, 220, 255), Material = Enum.Material.Glass,
 			Transparency = 0.52, CanCollide = false })
 		dw.Parent = m; weld(ch, dw)
@@ -321,22 +380,23 @@ local function buildPickup(tier: Rigs.RigTier, pos: Vector3): Model
 
 	-- Interior: dashboard, steering column, steering wheel ring
 	local dash = p({ Name = "Dashboard", Size = Vector3.new(W - 0.7, 0.55, 0.8),
-		CFrame = CFrame.new(pos + Vector3.new(0, 2.18, cabZ - L * 0.13)),
+		CFrame = CFrame.new(pos + Vector3.new(0, 2.5, cabZ - L * 0.13)),
 		Color = Color3.fromRGB(20, 20, 24), CanCollide = false })
 	dash.Parent = m; weld(ch, dash)
 	local stcol = cyl({ Name = "SteerColumn", Size = Vector3.new(1.5, 0.28, 0.28),
-		CFrame = CFrame.new(pos + Vector3.new(0, 2.7, cabZ - L * 0.10))
+		CFrame = CFrame.new(pos + Vector3.new(0, 3.0, cabZ - L * 0.10))
 			* CFrame.Angles(0, 0, math.rad(30)),
 		Color = Color3.fromRGB(22, 22, 26), CanCollide = false })
 	stcol.Parent = m; weld(ch, stcol)
 	local sw = cyl({ Name = "SteerWheel", Size = Vector3.new(0.18, 1.85, 1.85),
-		CFrame = CFrame.new(pos + Vector3.new(0, 3.08, cabZ - L * 0.09)),
+		CFrame = CFrame.new(pos + Vector3.new(0, 3.35, cabZ - L * 0.09)),
 		Color = Color3.fromRGB(22, 22, 26), CanCollide = false })
 	sw.Parent = m; weld(ch, sw)
 
-	-- Seat is INSIDE the cab at driver height. Cab walls are CanCollide=false
-	-- so the player walks through them — exactly like Driving Empire.
-	seat(m, ch, CFrame.new(pos + Vector3.new(0, 2.32, cabZ - 0.48)))
+	-- Seat is INSIDE the cab, low enough that the avatar's head stays
+	-- under the roof. Cab walls are CanCollide=false so the player walks
+	-- through them — exactly like Driving Empire.
+	seat(m, ch, CFrame.new(pos + Vector3.new(0, 2.05, cabZ - 0.48)))
 	return m
 end
 
@@ -354,25 +414,26 @@ local function buildFlatbed(tier: Rigs.RigTier, pos: Vector3): Model
 		Color = Color3.fromRGB(26, 26, 28), Material = Enum.Material.Metal })
 	ch.Parent = m; m.PrimaryPart = ch
 
-	-- Cab (forward cab-over: no long hood, cab starts right at front)
+	-- Cab (forward cab-over: no long hood, cab starts right at front).
+	-- Tall enough for a seated avatar to fit fully inside.
 	local cabZ = -L * 0.24
-	local cab = p({ Name = "Cab", Size = Vector3.new(W - 0.2, 3.4, L * 0.26),
-		CFrame = CFrame.new(pos + Vector3.new(0, 2.35, cabZ)), Color = bc, CanCollide = false })
+	local cab = p({ Name = "Cab", Size = Vector3.new(W - 0.2, 5.0, L * 0.26),
+		CFrame = CFrame.new(pos + Vector3.new(0, 3.15, cabZ)), Color = bc, CanCollide = false })
 	cab.Parent = m; weld(ch, cab)
 
 	-- Windshield (nearly vertical on cab-over)
-	local ws = p({ Name = "Windshield", Size = Vector3.new(W - 0.6, 2.6, 0.18),
-		CFrame = CFrame.new(pos + Vector3.new(0, 2.55, -L * 0.36)) * CFrame.Angles(math.rad(6), 0, 0),
+	local ws = p({ Name = "Windshield", Size = Vector3.new(W - 0.6, 3.8, 0.18),
+		CFrame = CFrame.new(pos + Vector3.new(0, 3.15, -L * 0.36)) * CFrame.Angles(math.rad(6), 0, 0),
 		Color = Color3.fromRGB(190, 225, 255), Material = Enum.Material.Glass,
 		Transparency = 0.48, CanCollide = false })
 	ws.Parent = m; weld(ch, ws)
 
 	-- Cab roof + visor lip
 	local roof = p({ Name = "Roof", Size = Vector3.new(W - 0.18, 0.45, L * 0.26),
-		CFrame = CFrame.new(pos + Vector3.new(0, 4.05, cabZ)), Color = bc, CanCollide = false })
+		CFrame = CFrame.new(pos + Vector3.new(0, 5.9, cabZ)), Color = bc, CanCollide = false })
 	roof.Parent = m; weld(ch, roof)
 	local visor = p({ Name = "Visor", Size = Vector3.new(W - 0.16, 0.18, 0.9),
-		CFrame = CFrame.new(pos + Vector3.new(0, 4.30, -L * 0.36)),
+		CFrame = CFrame.new(pos + Vector3.new(0, 6.05, -L * 0.36)),
 		Color = bc, CanCollide = false })
 	visor.Parent = m; weld(ch, visor)
 
@@ -420,7 +481,7 @@ local function buildFlatbed(tier: Rigs.RigTier, pos: Vector3): Model
 	-- Mirrors
 	for _, mx in { W * 0.53, -W * 0.53 } do
 		local mir = p({ Name = "Mirror", Size = Vector3.new(0.25, 0.55, 0.6),
-			CFrame = CFrame.new(pos + Vector3.new(mx, 3.3, cabZ + 0.2)),
+			CFrame = CFrame.new(pos + Vector3.new(mx, 4.0, cabZ + 0.2)),
 			Color = mc, Material = Enum.Material.Metal, CanCollide = false })
 		mir.Parent = m; weld(ch, mir)
 	end
@@ -442,13 +503,13 @@ local function buildFlatbed(tier: Rigs.RigTier, pos: Vector3): Model
 		Color = Color3.fromRGB(22, 22, 26), CanCollide = false })
 	fsw.Parent = m; weld(ch, fsw)
 	for _, wx2 in { (W - 0.2) / 2 + 0.05, -((W - 0.2) / 2 + 0.05) } do
-		local dw = p({ Name = "DoorWindow", Size = Vector3.new(0.14, 2.2, L * 0.22),
-			CFrame = CFrame.new(pos + Vector3.new(wx2, 2.6, cabZ)),
+		local dw = p({ Name = "DoorWindow", Size = Vector3.new(0.14, 3.2, L * 0.22),
+			CFrame = CFrame.new(pos + Vector3.new(wx2, 3.4, cabZ)),
 			Color = Color3.fromRGB(185, 220, 255), Material = Enum.Material.Glass,
 			Transparency = 0.52, CanCollide = false })
 		dw.Parent = m; weld(ch, dw)
 	end
-	seat(m, ch, CFrame.new(pos + Vector3.new(0, 2.55, cabZ - 0.4)))
+	seat(m, ch, CFrame.new(pos + Vector3.new(0, 2.2, cabZ - 0.4)))
 	return m
 end
 
@@ -510,47 +571,47 @@ local function buildLoggingTruck(tier: Rigs.RigTier, pos: Vector3): Model
 
 	-- Cab (day cab — shorter than a full sleeper)
 	local cabZ = L * 0.09
-	local cab = p({ Name = "Cab", Size = Vector3.new(W - 0.1, 3.6, L * 0.22),
-		CFrame = CFrame.new(pos + Vector3.new(0, 2.65, cabZ)), Color = bc, CanCollide = false })
+	local cab = p({ Name = "Cab", Size = Vector3.new(W - 0.1, 5.0, L * 0.22),
+		CFrame = CFrame.new(pos + Vector3.new(0, 3.3, cabZ)), Color = bc, CanCollide = false })
 	cab.Parent = m; weld(ch, cab)
 
 	-- Windshield + visor lip
-	local ws = p({ Name = "Windshield", Size = Vector3.new(W - 0.5, 2.6, 0.18),
-		CFrame = CFrame.new(pos + Vector3.new(0, 2.75, -L * 0.02)) * CFrame.Angles(math.rad(12), 0, 0),
+	local ws = p({ Name = "Windshield", Size = Vector3.new(W - 0.5, 3.8, 0.18),
+		CFrame = CFrame.new(pos + Vector3.new(0, 3.6, -L * 0.02)) * CFrame.Angles(math.rad(12), 0, 0),
 		Color = Color3.fromRGB(185, 218, 255), Material = Enum.Material.Glass,
 		Transparency = 0.48, CanCollide = false })
 	ws.Parent = m; weld(ch, ws)
 	local visor = p({ Name = "Visor", Size = Vector3.new(W - 0.1, 0.2, 1.2),
-		CFrame = CFrame.new(pos + Vector3.new(0, 4.47, -L * 0.02)),
+		CFrame = CFrame.new(pos + Vector3.new(0, 6.15, -L * 0.02)),
 		Color = bc, CanCollide = false })
 	visor.Parent = m; weld(ch, visor)
 
 	-- Cab roof + sleeper bump
 	local roof = p({ Name = "Roof", Size = Vector3.new(W - 0.06, 0.48, L * 0.22),
-		CFrame = CFrame.new(pos + Vector3.new(0, 4.45, cabZ)), Color = bc, CanCollide = false })
+		CFrame = CFrame.new(pos + Vector3.new(0, 5.95, cabZ)), Color = bc, CanCollide = false })
 	roof.Parent = m; weld(ch, roof)
 
 	-- Vertical chrome exhaust stacks (two)
 	for _, sx in { W * 0.46, -W * 0.46 } do
 		local stack = cyl({ Name = "ExhaustStack",
 			Size = Vector3.new(L * 0.28, 0.55, 0.55),
-			CFrame = CFrame.new(pos + Vector3.new(sx, 5.2, cabZ - L * 0.04))
+			CFrame = CFrame.new(pos + Vector3.new(sx, 5.8, cabZ - L * 0.04))
 				* CFrame.Angles(0, 0, math.rad(90)),
 			Color = mc, Material = Enum.Material.Metal })
 		stack.Parent = m; weld(ch, stack)
 		-- Stack tip (neon spark — exhaust heat visual)
-		neon(pos + Vector3.new(sx, 6.6, cabZ - L * 0.04),
+		neon(pos + Vector3.new(sx, 7.4, cabZ - L * 0.04),
 			Color3.fromRGB(255, 160, 40), Vector3.new(0.45, 0.45, 0.45), m, ch)
 	end
 
 	-- Large west-coast mirrors
 	for _, mx in { W * 0.56, -W * 0.56 } do
 		local arm = p({ Name = "MirrorArm", Size = Vector3.new(0.25, 0.2, 1.0),
-			CFrame = CFrame.new(pos + Vector3.new(mx, 3.5, -L * 0.02)),
+			CFrame = CFrame.new(pos + Vector3.new(mx, 4.3, -L * 0.02)),
 			Color = mc, Material = Enum.Material.Metal, CanCollide = false })
 		arm.Parent = m; weld(ch, arm)
 		local mirFace = p({ Name = "Mirror", Size = Vector3.new(0.2, 0.9, 0.72),
-			CFrame = CFrame.new(pos + Vector3.new(mx + (mx > 0 and 0.1 or -0.1), 3.5, -L * 0.05)),
+			CFrame = CFrame.new(pos + Vector3.new(mx + (mx > 0 and 0.1 or -0.1), 4.3, -L * 0.05)),
 			Color = mc, Material = Enum.Material.Metal, CanCollide = false })
 		mirFace.Parent = m; weld(ch, mirFace)
 	end
@@ -607,20 +668,20 @@ local function buildLoggingTruck(tier: Rigs.RigTier, pos: Vector3): Model
 		Color = Color3.fromRGB(22, 22, 26), CanCollide = false })
 	lsw.Parent = m; weld(ch, lsw)
 	for _, wx2 in { (W - 0.1) / 2 + 0.05, -((W - 0.1) / 2 + 0.05) } do
-		local dw = p({ Name = "DoorWindow", Size = Vector3.new(0.14, 2.4, L * 0.20),
-			CFrame = CFrame.new(pos + Vector3.new(wx2, 2.9, cabZ)),
+		local dw = p({ Name = "DoorWindow", Size = Vector3.new(0.14, 3.2, L * 0.20),
+			CFrame = CFrame.new(pos + Vector3.new(wx2, 3.7, cabZ)),
 			Color = Color3.fromRGB(185, 218, 255), Material = Enum.Material.Glass,
 			Transparency = 0.52, CanCollide = false })
 		dw.Parent = m; weld(ch, dw)
 	end
-	-- Air horn lanyard (visual detail)
+	-- Air horn lanyard (visual detail, hangs from the ceiling)
 	local horn = p({ Name = "HornPull", Size = Vector3.new(0.15, 0.9, 0.15),
-		CFrame = CFrame.new(pos + Vector3.new(W * 0.22, 3.5, cabZ - L * 0.04)),
+		CFrame = CFrame.new(pos + Vector3.new(W * 0.22, 4.6, cabZ - L * 0.04)),
 		Color = Color3.fromRGB(200, 170, 80), CanCollide = false })
 	horn.Parent = m; weld(ch, horn)
 	-- Hood (long nose): CanCollide=false
 	hood.CanCollide = false
-	seat(m, ch, CFrame.new(pos + Vector3.new(0, 2.75, cabZ - 0.4)))
+	seat(m, ch, CFrame.new(pos + Vector3.new(0, 2.35, cabZ - 0.4)))
 	return m
 end
 
@@ -674,28 +735,29 @@ local function buildFellerBuncher(tier: Rigs.RigTier, pos: Vector3): Model
 
 	-- Cab box (CanCollide=false — ROPS provides the visual shell, player sits inside)
 	local cabZ2 = -L * 0.22
-	local cab = p({ Name = "Cab", Size = Vector3.new(W * 0.72, 3.0, L * 0.28),
-		CFrame = CFrame.new(pos + Vector3.new(0, 3.1, cabZ2)), Color = bc, CanCollide = false })
+	local cab = p({ Name = "Cab", Size = Vector3.new(W * 0.72, 4.2, L * 0.28),
+		CFrame = CFrame.new(pos + Vector3.new(0, 3.7, cabZ2)), Color = bc, CanCollide = false })
 	cab.Parent = m; weld(ch, cab)
 
-	-- ROPS posts (four corners of the cab)
+	-- ROPS posts (four corners of the cab) — tall enough that the seated
+	-- operator's head stays inside the cage.
 	for _, rpx in { W * 0.30, -W * 0.30 } do
 		for _, rpz in { cabZ2 - L * 0.13, cabZ2 + L * 0.13 } do
-			local post = p({ Name = "ROPS", Size = Vector3.new(0.4, 3.2, 0.4),
-				CFrame = CFrame.new(pos + Vector3.new(rpx, 4.75, rpz)),
+			local post = p({ Name = "ROPS", Size = Vector3.new(0.4, 4.8, 0.4),
+				CFrame = CFrame.new(pos + Vector3.new(rpx, 5.5, rpz)),
 				Color = Color3.fromRGB(220, 180, 40), Material = Enum.Material.Metal })
 			post.Parent = m; weld(ch, post)
 		end
 	end
 	-- ROPS top bar
 	local ropsTop = p({ Name = "ROPSTop", Size = Vector3.new(W * 0.68, 0.4, L * 0.28),
-		CFrame = CFrame.new(pos + Vector3.new(0, 6.35, cabZ2)),
+		CFrame = CFrame.new(pos + Vector3.new(0, 8.15, cabZ2)),
 		Color = Color3.fromRGB(220, 180, 40), Material = Enum.Material.Metal })
 	ropsTop.Parent = m; weld(ch, ropsTop)
 
 	-- Large front windshield
-	local fbws = p({ Name = "Windshield", Size = Vector3.new(W * 0.68, 2.6, 0.16),
-		CFrame = CFrame.new(pos + Vector3.new(0, 3.3, cabZ2 - L * 0.13)) * CFrame.Angles(math.rad(5), 0, 0),
+	local fbws = p({ Name = "Windshield", Size = Vector3.new(W * 0.68, 3.6, 0.16),
+		CFrame = CFrame.new(pos + Vector3.new(0, 3.6, cabZ2 - L * 0.13)) * CFrame.Angles(math.rad(5), 0, 0),
 		Color = Color3.fromRGB(185, 220, 255), Material = Enum.Material.Glass,
 		Transparency = 0.45, CanCollide = false })
 	fbws.Parent = m; weld(ch, fbws)
@@ -753,10 +815,10 @@ local function buildFellerBuncher(tier: Rigs.RigTier, pos: Vector3): Model
 	-- No traditional wheels — tracks are the ground contact
 	-- Feller buncher interior (simple — mostly glass panels + joystick)
 	local jstick = p({ Name = "Joystick", Size = Vector3.new(0.25, 1.0, 0.25),
-		CFrame = CFrame.new(pos + Vector3.new(0.5, 4.1, cabZ2)),
+		CFrame = CFrame.new(pos + Vector3.new(0.5, 3.7, cabZ2)),
 		Color = Color3.fromRGB(22, 22, 26), CanCollide = false })
 	jstick.Parent = m; weld(ch, jstick)
-	seat(m, ch, CFrame.new(pos + Vector3.new(0, 4.1, cabZ2 + 0.3)))
+	seat(m, ch, CFrame.new(pos + Vector3.new(0, 3.5, cabZ2 + 0.3)))
 	return m
 end
 
@@ -814,6 +876,11 @@ local function onPilotOut(entry: RigEntry)
 		root.AssemblyLinearVelocity = Vector3.zero
 		root.AssemblyAngularVelocity = Vector3.zero
 	end
+	if entry.wheelMotors then
+		for _, motor in entry.wheelMotors do
+			motor.AngularVelocity = 0
+		end
+	end
 	clearMovers(entry)
 	setAnchored(entry.model, true)
 end
@@ -837,6 +904,17 @@ RunService.Heartbeat:Connect(function(dt)
 			cur.Y,
 			cur.Z + (horiz.Z * throttle * spd - cur.Z) * math.min(1, accel * dt)
 		)
+
+		-- Roll the cosmetic wheels to match ground speed.
+		if entry.wheelMotors then
+			local groundSpeed = root.AssemblyLinearVelocity:Dot(horiz)
+			for _, motor in entry.wheelMotors do
+				local r = motor:GetAttribute("Radius")
+				if typeof(r) == "number" and r > 0.1 then
+					motor.AngularVelocity = groundSpeed / r
+				end
+			end
+		end
 		local yawRate = math.rad(entry.tier.turnSpeed)
 		local cf = entry.yawCFrame or CFrame.new()
 		cf = cf * CFrame.Angles(0, -steer * yawRate * dt, 0)
@@ -895,6 +973,16 @@ function RigService.spawn(player: Player)
 		player = player, model = model, seat = s, tier = tier,
 		pilot = nil, mover = {}, yawCFrame = nil,
 	}
+	-- Collect the motorised wheel hinges so the tick can roll them.
+	local motors: { HingeConstraint } = {}
+	for _, d in model:GetDescendants() do
+		if d:IsA("HingeConstraint") and d.Name == "WheelMotor" then
+			table.insert(motors, d)
+		end
+	end
+	if #motors > 0 then
+		entry.wheelMotors = motors
+	end
 	registry[player] = entry
 	s:GetPropertyChangedSignal("Occupant"):Connect(function()
 		local occ = s.Occupant

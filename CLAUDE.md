@@ -103,6 +103,22 @@ src/client/   init.client   UI mount, T=call truck, key hints
   diesel engines) is wanted — needs curated asset IDs, don't guess them.
 - **WeldConstraints + anchored parts:** moving an anchored trunk does NOT
   move welded anchored leaves. Trees only move as one body once unanchored.
+- **Seated avatars need ~3.2 studs from seat surface to ceiling.** Cab
+  interiors must respect this or the driver's torso pokes through the roof
+  (the original 2.9-tall cabs all did). Current cabs are 4.8-5.0 tall with
+  seats at y≈2.0-2.4; keep that ratio for new vehicles.
+- **Wheels: invisible welded collider + visible motorised tyre.** The
+  visible Wheel/Hub are CanCollide=false Massless on a HingeConstraint
+  ("WheelMotor", Radius attribute); RigService's tick sets AngularVelocity
+  = groundSpeed/radius. Driving physics never touch the visible wheels.
+- **Stale-place confusion:** the user playtesting "no trees, road ends"
+  almost always means a STALE .rbxlx (Auto-Recovery restore or an old
+  Studio window) — rebuild, close BigTimber-titled Studio windows, reopen.
+  Local files never appear in Studio's "Recents" page; only published
+  experiences do.
+- **Lighting.Technology = "Voxel" is set in default.project.json** so the
+  "Lighting Technology Migration" dialog never appears on open. Don't
+  remove it.
 
 ## Current loop (post vision-alignment pass)
 
