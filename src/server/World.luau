@@ -217,7 +217,13 @@ local function buildRoads()
 	local function roadSeg(x1: number, z1: number, x2: number, z2: number,
 		width: number, mat: Enum.Material)
 		local dx, dz = x2 - x1, z2 - z1
-		local steps = math.ceil(math.sqrt(dx * dx + dz * dz) / 2.5)
+		local len = math.sqrt(dx * dx + dz * dz)
+		if len < 0.05 then
+			-- A zero-length segment makes steps=0 → t=0/0=NaN → FillBlock
+			-- throws "Extents cannot be empty" and aborts the whole boot.
+			return
+		end
+		local steps = math.ceil(len / 2.5)
 		for i = 0, steps do
 			local t = i / steps
 			local x = x1 + dx * t
@@ -288,8 +294,12 @@ local function buildRoads()
 			wRoad[i+1][1], wRoad[i+1][2], 8, Enum.Material.Ground)
 	end
 
-	-- Paved spur into the mill log yard
-	roadSeg(-24, M.Position.Z, M.Position.X - 24, M.Position.Z, 10, Enum.Material.Pavement)
+	-- Paved apron at the mill log deck so trucks can pull off the main
+	-- road onto the intake pad (pad centre is Position + IntakePadOffset).
+	local padZ = M.Position.Z + M.IntakePadOffset.Z
+	terrain:FillBlock(
+		CFrame.new(0, World.surfaceAt(0, padZ) - 0.5, padZ),
+		Vector3.new(56, 1.5, 30), Enum.Material.Pavement)
 end
 
 -- ═════════════════════════════════ tunnel ═══════════════════════════
