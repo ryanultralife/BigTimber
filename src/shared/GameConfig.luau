@@ -59,7 +59,7 @@ GameConfig.Chop = {
 
 -- Loose logs (felled trees drop these; trucks load them) ----------------
 GameConfig.Logs = {
-	LoadRadius = 16, -- park the rig within this of a log to load it
+	LoadRadius = 26, -- logs float aboard from this far — forgiving, kid-friendly
 	DespawnSeconds = 180, -- abandoned logs rot away
 	MaxLoose = 60, -- oldest logs despawn past this count (perf guard)
 }

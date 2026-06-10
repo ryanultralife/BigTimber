@@ -85,9 +85,13 @@ function World.surfaceAt(x: number, z: number): number
 	end
 
 	-- Valley floor south of the tunnel: flatten for the mill/shop town.
-	if z < T.TunnelHillZ - T.TunnelHillRadius then
-		local valleyT = math.clamp(
-			(-(z - (T.TunnelHillZ - T.TunnelHillRadius))) / 120, 0, 1)
+	-- (The old blend started at z=-400 and tapered over 120 studs — hills
+	-- were still ~90% height at the mill (z=-420), burying it inside a
+	-- mountain and walling off the tunnel exit. Start flattening right at
+	-- the south portal instead, fully flat before the mill.)
+	local valleyStart = T.TunnelHillZ - T.TunnelTubeHalf - 5
+	if z < valleyStart then
+		local valleyT = math.clamp((valleyStart - z) / 80, 0, 1)
 		surface = surface * (1 - smoothstep(valleyT))
 	end
 

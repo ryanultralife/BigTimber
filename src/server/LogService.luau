@@ -106,18 +106,34 @@ local function loadOntoRig(entry: Loose, rigModel: Model)
 	if not root or not log.Parent then
 		return
 	end
-	-- Quick hop animation onto the bunk, then the part disappears into
-	-- the load count (the truck's visual stack shows it from then on).
+	-- Two-stage float onto the bunk: lift straight up off the ground, then
+	-- glide over to the truck. The tween ignores physics entirely, so it
+	-- works no matter where the log rolled or what it's wedged against.
 	log.Anchored = true
 	log.CanCollide = false
-	local target = CFrame.new(root.Position + Vector3.new(0, 4.5, 0))
-		* CFrame.Angles(0, math.rad(90), 0)
-	local tw = TweenService:Create(log,
-		TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ CFrame = target })
-	tw:Play()
-	tw.Completed:Once(function()
-		log:Destroy()
+	task.spawn(function()
+		local lift = TweenService:Create(log,
+			TweenInfo.new(0.3, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+			{ CFrame = log.CFrame + Vector3.new(0, 3.5, 0) })
+		lift:Play()
+		lift.Completed:Wait()
+		if not log.Parent then
+			return
+		end
+		if not root.Parent then
+			log:Destroy()
+			return
+		end
+		local target = CFrame.new(root.Position + Vector3.new(0, 4.5, 0))
+			* CFrame.Angles(0, math.rad(90), 0)
+		local glide = TweenService:Create(log,
+			TweenInfo.new(0.45, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+			{ CFrame = target })
+		glide:Play()
+		glide.Completed:Wait()
+		if log.Parent then
+			log:Destroy()
+		end
 	end)
 end
 
