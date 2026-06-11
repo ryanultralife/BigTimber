@@ -25,8 +25,10 @@ screen.Parent = playerGui
 local UI = script:WaitForChild("UI")
 local Hud = require(UI:WaitForChild("Hud"))
 local ShopUI = require(UI:WaitForChild("Shop"))
+local Tutorial = require(UI:WaitForChild("Tutorial"))
 Hud.mount(screen)
 ShopUI.mount(screen)
+Tutorial.mount(screen)
 
 -- Toast notifications + chop controller.
 require(script:WaitForChild("NoticeToast"))

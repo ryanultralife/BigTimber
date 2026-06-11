@@ -72,4 +72,11 @@ Players.PlayerAdded:Connect(function(player)
 	end)
 end)
 
+-- Tutorial finished or skipped — never show it to this account again.
+Remotes.CompleteTutorial.OnServerEvent:Connect(function(player)
+	if PlayerData.isLoaded(player) then
+		PlayerData.get(player).tutorialComplete = true
+	end
+end)
+
 print("[BigTimber] server ready.")

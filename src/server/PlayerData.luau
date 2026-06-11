@@ -24,6 +24,10 @@ export type Profile = {
 	loadValue: number, -- cash the current load mills into
 	lifetimeLogs: number,
 	lifetimeCash: number,
+	lifetimeTrees: number?, -- trees felled, drives the tutorial's chop step
+	-- True once the guided tutorial is finished or skipped; the client
+	-- stops showing it. Persisted so it's once per account.
+	tutorialComplete: boolean?,
 }
 
 local PlayerData = {}
@@ -63,6 +67,8 @@ local function newProfile(): Profile
 		loadValue = 0,
 		lifetimeLogs = 0,
 		lifetimeCash = 0,
+		lifetimeTrees = 0,
+		tutorialComplete = false,
 	}
 end
 
@@ -80,6 +86,8 @@ local function migrate(p: any): Profile
 	p.loadValue = p.loadValue or 0
 	p.lifetimeLogs = p.lifetimeLogs or 0
 	p.lifetimeCash = p.lifetimeCash or 0
+	p.lifetimeTrees = p.lifetimeTrees or 0
+	p.tutorialComplete = p.tutorialComplete or false
 	return p
 end
 

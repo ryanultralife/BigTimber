@@ -25,6 +25,9 @@ function Net.snapshot(player: Player)
 		toolName = tool.name,
 		rigName = rig.name,
 		lifetimeLogs = p.lifetimeLogs,
+		lifetimeCash = p.lifetimeCash,
+		lifetimeTrees = p.lifetimeTrees or 0,
+		tutorialComplete = p.tutorialComplete == true,
 		nextTool = nextTool and { name = nextTool.name, cost = nextTool.cost } or nil,
 		nextRig = nextRig and { name = nextRig.name, cost = nextRig.cost } or nil,
 	}

@@ -124,6 +124,7 @@ Remotes.ChopTree.OnServerEvent:Connect(function(player, uid)
 		return
 	end
 	local species = Wood.get(result.speciesId)
+	prof.lifetimeTrees = (prof.lifetimeTrees or 0) + 1
 	LogService.spawnLogs(player, result.speciesId, result.logs, result.position)
 	Net.notice(player, ("TIMBER! %d %s logs — bring the truck close to load them"):format(
 		result.logs, species and species.name or "wood"))

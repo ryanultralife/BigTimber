@@ -26,6 +26,9 @@ return {
 	-- Server → client: open the upgrade shop dialog (fired when the player
 	-- interacts with Big Dale the NPC dealer).
 	OpenShop = getOrCreate("OpenShop", "RemoteEvent") :: RemoteEvent,
+	-- Client → server: the player finished (or skipped) the tutorial.
+	-- Sets Profile.tutorialComplete so it never nags again.
+	CompleteTutorial = getOrCreate("CompleteTutorial", "RemoteEvent") :: RemoteEvent,
 	-- Client → server: swing animation pulse (cosmetic only — the server
 	-- ChopTree remote does the authoritative hit check).
 	SwingPulse = getOrCreate("SwingPulse", "RemoteEvent") :: RemoteEvent,
